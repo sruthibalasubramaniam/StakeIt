@@ -1,0 +1,796 @@
+// ============================================================================
+// Stake It — Prisma schema
+// Incentive-Driven Adaptive Learning Management Platform
+//
+// All point values are VIRTUAL platform points stored as integers.
+// No real money, no gambling — the ledger is a pure accountability mechanism.
+// ============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+
+  // OPTIONAL — pooled connections only.
+  // If you point DATABASE_URL at a connection pooler (Supabase Supavisor, e.g.
+  // `...pooler.supabase.com:6543?pgbouncer=true`), uncomment the line below AND
+  // define DIRECT_URL with the direct (non-pooled) connection string so that
+  // `prisma migrate` bypasses the pooler. It is commented out by default
+  // because Prisma fails validation when a referenced env var is missing.
+  //
+  // directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  LEARNER
+  INSTRUCTOR
+  ADMIN
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum Difficulty {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+  EXPERT
+}
+
+enum ContentType {
+  VIDEO
+  READING
+  QUIZ
+  MODULE_ASSESSMENT
+  CODING
+  SUBJECTIVE
+}
+
+enum ContentStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  COMPLETED
+  FAILED
+  WITHDRAWN
+}
+
+/// Lifecycle of a single course attempt (one "try" at finishing a course).
+enum AttemptStatus {
+  ACTIVE
+  AT_RISK
+  GRACE_PERIOD
+  COMPLETED
+  FAILED
+  ABANDONED
+}
+
+enum StakeType {
+  BASE
+  COMMITMENT
+}
+
+enum StakeStatus {
+  LOCKED
+  RETURNED
+  FORFEITED
+}
+
+enum WalletTransactionType {
+  SIGNUP_GRANT
+  STAKE_LOCKED
+  STAKE_RETURNED
+  STAKE_FORFEITED
+  COURSE_REWARD
+  COMMITMENT_BONUS
+  PERFORMANCE_BONUS
+  RETRY_REWARD
+  ADMIN_ADJUSTMENT
+}
+
+enum RewardPoolTransactionType {
+  FORFEIT_IN
+  REWARD_OUT
+  ADMIN_ADJUSTMENT
+}
+
+enum AssessmentType {
+  MODULE
+  FINAL
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTI_CHOICE
+  TRUE_FALSE
+  SHORT_TEXT
+  CODING
+  SUBJECTIVE
+}
+
+enum AttemptGradeStatus {
+  SUBMITTED
+  AUTO_GRADED
+  PENDING_REVIEW
+  MANUALLY_GRADED
+  REJECTED
+}
+
+enum BadgeTier {
+  NONE
+  BRONZE
+  SILVER
+  GOLD
+}
+
+enum NotificationType {
+  ENROLLMENT
+  DEADLINE_APPROACHING
+  AT_RISK
+  ACCELERATED_DEADLINE
+  COURSE_COMPLETED
+  REWARD_RECEIVED
+  STAKE_FORFEITED
+  RETRY_AVAILABLE
+  INSTRUCTOR_BADGE
+  SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  /// Supabase auth user id (`sub` claim). Null when local auth is used.
+  supabaseId   String?   @unique @map("supabase_id")
+  /// Only populated when AUTH_PROVIDER=local. Never returned by the API.
+  passwordHash String?   @map("password_hash")
+  role         Role      @default(LEARNER)
+  fullName     String    @map("full_name")
+  avatarUrl    String?   @map("avatar_url")
+  headline     String?
+  bio          String?
+  expertise    String[]  @default([])
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  wallet              Wallet?
+  coursesTaught       Course[]                @relation("CourseInstructor")
+  enrollments         Enrollment[]
+  attempts            CourseAttempt[]
+  contentProgress     ContentProgress[]
+  quizAttempts        QuizAttempt[]
+  submissions         AssessmentSubmission[]
+  authoredReviews     CourseReview[]
+  reviewedSubmissions AssessmentSubmission[]  @relation("SubmissionReviewer")
+  stakes              Stake[]
+  walletTxns          WalletTransaction[]
+  rewardPoolTxns      RewardPoolTransaction[] @relation("RewardPoolActor")
+  badges              InstructorBadge[]       @relation("BadgeInstructor")
+  awardedBadges       InstructorBadge[]       @relation("BadgeAwardedBy")
+  notifications       Notification[]
+
+  @@index([role])
+  @@index([isActive])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Wallet & ledger
+// ---------------------------------------------------------------------------
+
+model Wallet {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @map("user_id") @db.Uuid
+  /// Spendable points.
+  availableBalance  Int      @default(0) @map("available_balance")
+  /// Points currently committed to active stakes.
+  lockedBalance     Int      @default(0) @map("locked_balance")
+  lifetimeEarned    Int      @default(0) @map("lifetime_earned")
+  lifetimeStaked    Int      @default(0) @map("lifetime_staked")
+  lifetimeForfeited Int      @default(0) @map("lifetime_forfeited")
+  /// Optimistic-concurrency guard; every mutation increments it.
+  version           Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@map("wallets")
+}
+
+model WalletTransaction {
+  id            String                @id @default(uuid()) @db.Uuid
+  userId        String                @map("user_id") @db.Uuid
+  walletId      String                @map("wallet_id") @db.Uuid
+  type          WalletTransactionType
+  /// Signed amount: positive = credit, negative = debit.
+  amount        Int
+  balanceAfter  Int                   @map("balance_after")
+  /// e.g. ENROLLMENT | COURSE_ATTEMPT | STAKE | REVIEW | ADMIN
+  referenceType String?               @map("reference_type")
+  referenceId   String?               @map("reference_id")
+  description   String
+  metadata      Json?
+  createdAt     DateTime              @default(now()) @map("created_at")
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([walletId])
+  @@index([type])
+  @@index([referenceType, referenceId])
+  @@map("wallet_transactions")
+}
+
+/// Singleton row (see `RewardPoolService.getPool`) holding the platform pool.
+model RewardPool {
+  id        String   @id @default("platform") @db.VarChar(32)
+  balance   Int      @default(0)
+  totalIn   Int      @default(0) @map("total_in")
+  totalOut  Int      @default(0) @map("total_out")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  transactions RewardPoolTransaction[]
+
+  @@map("reward_pool")
+}
+
+model RewardPoolTransaction {
+  id            String                    @id @default(uuid()) @db.Uuid
+  poolId        String                    @map("pool_id") @db.VarChar(32)
+  type          RewardPoolTransactionType
+  /// Signed amount: positive = into the pool, negative = out of the pool.
+  amount        Int
+  balanceAfter  Int                       @map("balance_after")
+  referenceType String?                   @map("reference_type")
+  referenceId   String?                   @map("reference_id")
+  description   String
+  actorId       String?                   @map("actor_id") @db.Uuid
+  createdAt     DateTime                  @default(now()) @map("created_at")
+
+  pool  RewardPool @relation(fields: [poolId], references: [id], onDelete: Cascade)
+  actor User?      @relation("RewardPoolActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([poolId, createdAt])
+  @@index([type])
+  @@map("reward_pool_transactions")
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue
+// ---------------------------------------------------------------------------
+
+model Course {
+  id               String       @id @default(uuid()) @db.Uuid
+  code             String       @unique
+  slug             String       @unique
+  title            String
+  shortDescription String       @map("short_description") @db.VarChar(280)
+  description      String
+  category         String
+  difficulty       Difficulty   @default(INTERMEDIATE)
+  coverImageUrl    String?      @map("cover_image_url")
+  tags             String[]     @default([])
+  status           CourseStatus @default(DRAFT)
+  publishedAt      DateTime?    @map("published_at")
+
+  instructorId String @map("instructor_id") @db.Uuid
+  instructor   User   @relation("CourseInstructor", fields: [instructorId], references: [id], onDelete: Restrict)
+
+  // --- Accountability economics -------------------------------------------
+  /// Points the learner must commit to enrol.
+  baseStake            Int @map("base_stake")
+  /// Points awarded on verified completion.
+  completionReward     Int @map("completion_reward")
+  /// Bonus for meeting the optional accelerated deadline.
+  commitmentBonus      Int @default(0) @map("commitment_bonus")
+  /// Bonus when the final course score reaches `performanceThreshold`.
+  performanceBonus     Int @default(0) @map("performance_bonus")
+  /// Percentage (0-100) the final score must reach for the performance bonus.
+  performanceThreshold Int @default(90) @map("performance_threshold")
+
+  // --- Schedule ------------------------------------------------------------
+  durationDays     Int @map("duration_days")
+  /// Extra hours after the normal deadline during which the attempt is in GRACE_PERIOD.
+  gracePeriodHours Int @default(24) @map("grace_period_hours")
+
+  // --- Scoring configuration ----------------------------------------------
+  /// Module score contribution to the final score. `moduleWeight + finalTestWeight = 100`.
+  moduleWeight           Int  @default(70) @map("module_weight")
+  finalTestWeight        Int  @default(30) @map("final_test_weight")
+  /// Optional hard floor on the final test, independent of the weighted score.
+  minFinalTestScore      Int? @map("min_final_test_score")
+  /// Quiz contribution inside a module score (`moduleQuizWeight + moduleAssessmentWeight = 100`).
+  moduleQuizWeight       Int  @default(30) @map("module_quiz_weight")
+  moduleAssessmentWeight Int  @default(70) @map("module_assessment_weight")
+  /// Default valid-watch percentage required for video content.
+  requiredWatchPercent   Int  @default(90) @map("required_watch_percent")
+
+  // --- Retry policy --------------------------------------------------------
+  maxAttempts Int @default(3) @map("max_attempts")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  modules           Module[]
+  commitmentOptions CourseCommitmentOption[]
+  assessments       Assessment[]
+  enrollments       Enrollment[]
+  attempts          CourseAttempt[]
+  stakes            Stake[]
+  reviews           CourseReview[]
+
+  @@index([status, publishedAt])
+  @@index([instructorId])
+  @@index([category])
+  @@index([difficulty])
+  @@map("courses")
+}
+
+/// Instructor-configured accelerated-deadline choices shown on the enrolment screen.
+model CourseCommitmentOption {
+  id              String   @id @default(uuid()) @db.Uuid
+  courseId        String   @map("course_id") @db.Uuid
+  label           String
+  /// Personal deadline = enrollment date + durationDays.
+  durationDays    Int      @map("duration_days")
+  commitmentStake Int      @map("commitment_stake")
+  commitmentBonus Int      @map("commitment_bonus")
+  isDefault       Boolean  @default(false) @map("is_default")
+  isActive        Boolean  @default(true) @map("is_active")
+  orderIndex      Int      @default(0) @map("order_index")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  course Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  stakes Stake[]
+
+  @@index([courseId, isActive])
+  @@map("course_commitment_options")
+}
+
+model Module {
+  id         String   @id @default(uuid()) @db.Uuid
+  courseId   String   @map("course_id") @db.Uuid
+  title      String
+  summary    String?
+  orderIndex Int      @map("order_index")
+  isRequired Boolean  @default(true) @map("is_required")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  course      Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  contents    ModuleContent[]
+  assessments Assessment[]
+
+  @@index([courseId, orderIndex])
+  @@map("modules")
+}
+
+model ModuleContent {
+  id               String      @id @default(uuid()) @db.Uuid
+  moduleId         String      @map("module_id") @db.Uuid
+  type             ContentType
+  title            String
+  description      String?
+  orderIndex       Int         @map("order_index")
+  isRequired       Boolean     @default(true) @map("is_required")
+  estimatedMinutes Int?        @map("estimated_minutes")
+
+  // --- VIDEO ---------------------------------------------------------------
+  videoUrl             String? @map("video_url")
+  durationSeconds      Int?    @map("duration_seconds")
+  /// Overrides `Course.requiredWatchPercent` when set.
+  requiredWatchPercent Int?    @map("required_watch_percent")
+
+  // --- READING -------------------------------------------------------------
+  readingBody                String? @map("reading_body")
+  /// Whether a comprehension check must be passed before the reading counts.
+  requiresComprehensionCheck Boolean @default(false) @map("requires_comprehension_check")
+  comprehensionPrompt        String? @map("comprehension_prompt")
+  /// Answer key — never exposed by learner-facing endpoints.
+  comprehensionAnswer        String? @map("comprehension_answer")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  module     Module            @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  quiz       Quiz?
+  assessment Assessment?
+  progress   ContentProgress[]
+
+  @@index([moduleId, orderIndex])
+  @@index([type])
+  @@map("module_contents")
+}
+
+// ---------------------------------------------------------------------------
+// Assessment instruments
+// ---------------------------------------------------------------------------
+
+model Quiz {
+  id               String   @id @default(uuid()) @db.Uuid
+  contentId        String   @unique @map("content_id") @db.Uuid
+  title            String
+  description      String?
+  passingScore     Int      @default(70) @map("passing_score")
+  maxAttempts      Int?     @map("max_attempts")
+  timeLimitMinutes Int?     @map("time_limit_minutes")
+  shuffleQuestions Boolean  @default(false) @map("shuffle_questions")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  content   ModuleContent  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@map("quizzes")
+}
+
+model QuizQuestion {
+  id          String       @id @default(uuid()) @db.Uuid
+  quizId      String       @map("quiz_id") @db.Uuid
+  type        QuestionType @default(SINGLE_CHOICE)
+  prompt      String
+  explanation String?
+  points      Int          @default(1)
+  orderIndex  Int          @map("order_index")
+  createdAt   DateTime     @default(now()) @map("created_at")
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options QuizOption[]
+
+  @@index([quizId, orderIndex])
+  @@map("quiz_questions")
+}
+
+model QuizOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  detail     String?
+  isCorrect  Boolean @default(false) @map("is_correct")
+  orderIndex Int     @map("order_index")
+
+  question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, orderIndex])
+  @@map("quiz_options")
+}
+
+model QuizAttempt {
+  id               String             @id @default(uuid()) @db.Uuid
+  quizId           String             @map("quiz_id") @db.Uuid
+  userId           String             @map("user_id") @db.Uuid
+  attemptId        String             @map("attempt_id") @db.Uuid
+  attemptNumber    Int                @map("attempt_number")
+  /// `{ "<questionId>": ["<optionId>", ...] }`
+  answers          Json               @default("{}")
+  score            Float              @default(0)
+  maxScore         Float              @default(0) @map("max_score")
+  percentage       Float              @default(0)
+  passed           Boolean            @default(false)
+  status           AttemptGradeStatus @default(SUBMITTED)
+  timeSpentSeconds Int?               @map("time_spent_seconds")
+  startedAt        DateTime           @default(now()) @map("started_at")
+  submittedAt      DateTime?          @map("submitted_at")
+  gradedAt         DateTime?          @map("graded_at")
+
+  quiz    Quiz          @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt CourseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, attemptId, attemptNumber])
+  @@index([userId])
+  @@index([attemptId])
+  @@map("quiz_attempts")
+}
+
+model Assessment {
+  id               String         @id @default(uuid()) @db.Uuid
+  courseId         String         @map("course_id") @db.Uuid
+  /// Set for MODULE assessments, null for the FINAL assessment.
+  moduleId         String?        @map("module_id") @db.Uuid
+  /// Set for MODULE assessments (one assessment per assessment content item).
+  contentId        String?        @unique @map("content_id") @db.Uuid
+  type             AssessmentType
+  title            String
+  description      String?
+  passingScore     Int            @default(70) @map("passing_score")
+  maxAttempts      Int?           @map("max_attempts")
+  timeLimitMinutes Int?           @map("time_limit_minutes")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+
+  course      Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  module      Module?                @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  content     ModuleContent?         @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  questions   AssessmentQuestion[]
+  submissions AssessmentSubmission[]
+
+  @@index([courseId, type])
+  @@index([moduleId])
+  @@map("assessments")
+}
+
+model AssessmentQuestion {
+  id           String       @id @default(uuid()) @db.Uuid
+  assessmentId String       @map("assessment_id") @db.Uuid
+  type         QuestionType @default(SINGLE_CHOICE)
+  prompt       String
+  explanation  String?
+  points       Int          @default(1)
+  orderIndex   Int          @map("order_index")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  assessment Assessment         @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  options    AssessmentOption[]
+
+  @@index([assessmentId, orderIndex])
+  @@map("assessment_questions")
+}
+
+model AssessmentOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  detail     String?
+  isCorrect  Boolean @default(false) @map("is_correct")
+  orderIndex Int     @map("order_index")
+
+  question AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, orderIndex])
+  @@map("assessment_options")
+}
+
+model AssessmentSubmission {
+  id               String             @id @default(uuid()) @db.Uuid
+  assessmentId     String             @map("assessment_id") @db.Uuid
+  userId           String             @map("user_id") @db.Uuid
+  attemptId        String             @map("attempt_id") @db.Uuid
+  attemptNumber    Int                @map("attempt_number")
+  answers          Json               @default("{}")
+  score            Float              @default(0)
+  maxScore         Float              @default(0) @map("max_score")
+  percentage       Float              @default(0)
+  passed           Boolean            @default(false)
+  status           AttemptGradeStatus @default(SUBMITTED)
+  /// Set when a human (instructor/admin) reviews a subjective submission.
+  reviewerId       String?            @map("reviewer_id") @db.Uuid
+  reviewNotes      String?            @map("review_notes")
+  timeSpentSeconds Int?               @map("time_spent_seconds")
+  submittedAt      DateTime           @default(now()) @map("submitted_at")
+  gradedAt         DateTime?          @map("graded_at")
+
+  assessment Assessment    @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewer   User?         @relation("SubmissionReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  attempt    CourseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([assessmentId, attemptId, attemptNumber])
+  @@index([userId])
+  @@index([attemptId])
+  @@index([status])
+  @@map("assessment_submissions")
+}
+
+// ---------------------------------------------------------------------------
+// Learning
+// ---------------------------------------------------------------------------
+
+model Enrollment {
+  id           String           @id @default(uuid()) @db.Uuid
+  userId       String           @map("user_id") @db.Uuid
+  courseId     String           @map("course_id") @db.Uuid
+  status       EnrollmentStatus @default(ACTIVE)
+  attemptCount Int              @default(0) @map("attempt_count")
+  enrolledAt   DateTime         @default(now()) @map("enrolled_at")
+  completedAt  DateTime?        @map("completed_at")
+  /// Best final score across attempts.
+  bestScore    Float?           @map("best_score")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  attempts CourseAttempt[]
+  review   CourseReview?
+
+  @@unique([userId, courseId])
+  @@index([courseId, status])
+  @@index([userId, status])
+  @@map("enrollments")
+}
+
+model CourseAttempt {
+  id                      String        @id @default(uuid()) @db.Uuid
+  enrollmentId            String        @map("enrollment_id") @db.Uuid
+  userId                  String        @map("user_id") @db.Uuid
+  courseId                String        @map("course_id") @db.Uuid
+  attemptNumber           Int           @map("attempt_number")
+  status                  AttemptStatus @default(ACTIVE)
+  startedAt               DateTime      @default(now()) @map("started_at")
+  /// Course deadline (startedAt + durationDays).
+  normalDeadline          DateTime      @map("normal_deadline")
+  /// Optional self-chosen accelerated deadline.
+  acceleratedDeadline     DateTime?     @map("accelerated_deadline")
+  /// normalDeadline + gracePeriodHours.
+  graceDeadline           DateTime      @map("grace_deadline")
+  completedAt             DateTime?     @map("completed_at")
+  failedAt                DateTime?     @map("failed_at")
+  moduleScore             Float?        @map("module_score")
+  finalTestScore          Float?        @map("final_test_score")
+  finalScore              Float?        @map("final_score")
+  /// Whether the accelerated commitment (if any) was honoured.
+  commitmentMet           Boolean?      @map("commitment_met")
+  performanceBonusAwarded Boolean       @default(false) @map("performance_bonus_awarded")
+  pointsAwarded           Int           @default(0) @map("points_awarded")
+  pointsForfeited         Int           @default(0) @map("points_forfeited")
+  lastRiskCheckAt         DateTime?     @map("last_risk_check_at")
+  createdAt               DateTime      @default(now()) @map("created_at")
+  updatedAt               DateTime      @updatedAt @map("updated_at")
+
+  enrollment Enrollment @relation(fields: [enrollmentId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course     Course     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  progress     ContentProgress[]
+  quizAttempts QuizAttempt[]
+  submissions  AssessmentSubmission[]
+  stakes       Stake[]
+
+  @@unique([enrollmentId, attemptNumber])
+  @@index([userId, status])
+  @@index([status, normalDeadline])
+  @@index([status, graceDeadline])
+  @@map("course_attempts")
+}
+
+model ContentProgress {
+  id        String        @id @default(uuid()) @db.Uuid
+  userId    String        @map("user_id") @db.Uuid
+  attemptId String        @map("attempt_id") @db.Uuid
+  contentId String        @map("content_id") @db.Uuid
+  status    ContentStatus @default(NOT_STARTED)
+
+  // --- video verification --------------------------------------------------
+  watchedSeconds      Int   @default(0) @map("watched_seconds")
+  /// Union of verified watch segments, e.g. `[[0,20],[30,60]]` in seconds.
+  watchedSegments     Json  @default("[]") @map("watched_segments")
+  lastPositionSeconds Int   @default(0) @map("last_position_seconds")
+  validWatchPercent   Float @default(0) @map("valid_watch_percent")
+
+  // --- reading verification ------------------------------------------------
+  readingReachedEnd   Boolean  @default(false) @map("reading_reached_end")
+  comprehensionPassed Boolean? @map("comprehension_passed")
+
+  activeSeconds   Int       @default(0) @map("active_seconds")
+  firstAccessedAt DateTime? @map("first_accessed_at")
+  completedAt     DateTime? @map("completed_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt CourseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  content ModuleContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, contentId])
+  @@index([userId])
+  @@index([contentId])
+  @@map("content_progress")
+}
+
+// ---------------------------------------------------------------------------
+// Stakes, reviews, reputation
+// ---------------------------------------------------------------------------
+
+model Stake {
+  id                 String      @id @default(uuid()) @db.Uuid
+  userId             String      @map("user_id") @db.Uuid
+  courseId           String      @map("course_id") @db.Uuid
+  attemptId          String      @map("attempt_id") @db.Uuid
+  type               StakeType   @default(BASE)
+  amount             Int
+  status             StakeStatus @default(LOCKED)
+  commitmentOptionId String?     @map("commitment_option_id") @db.Uuid
+  lockedAt           DateTime    @default(now()) @map("locked_at")
+  settledAt          DateTime?   @map("settled_at")
+  settlementReason   String?     @map("settlement_reason")
+  /// Points actually returned to the learner at settlement.
+  returnedAmount     Int         @default(0) @map("returned_amount")
+  createdAt          DateTime    @default(now()) @map("created_at")
+  updatedAt          DateTime    @updatedAt @map("updated_at")
+
+  user             User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course           Course                  @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  attempt          CourseAttempt           @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  commitmentOption CourseCommitmentOption? @relation(fields: [commitmentOptionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([attemptId])
+  @@index([courseId])
+  @@index([status])
+  @@map("stakes")
+}
+
+model CourseReview {
+  id               String   @id @default(uuid()) @db.Uuid
+  courseId         String   @map("course_id") @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  enrollmentId     String?  @unique @map("enrollment_id") @db.Uuid
+  rating           Int
+  difficultyRating Int?     @map("difficulty_rating")
+  wouldRecommend   Boolean  @default(true) @map("would_recommend")
+  reviewText       String?  @map("review_text")
+  isFlagged        Boolean  @default(false) @map("is_flagged")
+  flagReason       String?  @map("flag_reason")
+  isPublished      Boolean  @default(true) @map("is_published")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  course     Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  enrollment Enrollment? @relation(fields: [enrollmentId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, courseId])
+  @@index([courseId, isPublished])
+  @@index([isFlagged])
+  @@map("course_reviews")
+}
+
+model InstructorBadge {
+  id           String    @id @default(uuid()) @db.Uuid
+  instructorId String    @map("instructor_id") @db.Uuid
+  tier         BadgeTier
+  awardedAt    DateTime  @default(now()) @map("awarded_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  /// Snapshot of the metrics used to justify the tier.
+  metrics      Json      @default("{}")
+  notes        String?
+  awardedById  String?   @map("awarded_by_id") @db.Uuid
+
+  instructor User? @relation("BadgeInstructor", fields: [instructorId], references: [id], onDelete: Cascade)
+  awardedBy  User? @relation("BadgeAwardedBy", fields: [awardedById], references: [id], onDelete: SetNull)
+
+  @@index([instructorId, isActive])
+  @@index([tier])
+  @@map("instructor_badges")
+}
+
+model Notification {
+  id        String           @id @default(uuid()) @db.Uuid
+  userId    String           @map("user_id") @db.Uuid
+  type      NotificationType
+  title     String
+  message   String
+  link      String?
+  metadata  Json?
+  isRead    Boolean          @default(false) @map("is_read")
+  readAt    DateTime?        @map("read_at")
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@map("notifications")
+}

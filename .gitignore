@@ -1,0 +1,57 @@
+# dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# builds
+dist/
+build/
+*.tsbuildinfo
+
+# env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# logs
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors / os
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# test / coverage
+coverage/
+.nyc_output/
+
+# prisma
+backend/prisma/migrations/dev.db*
+
+# misc
+.cache/
+tmp/
+temp/
+_design_ref/
+
+# Node's on-disk compile cache (created by the Vite/tsc toolchain)
+node-compile-cache/
+
+# tsx on-the-fly compile cache (created when running TypeScript scripts)
+tsx-*/
+
+# Vite config hot-reload temp files (emitted next to vite.config.ts on reload)
+vite.config.ts.timestamp-*
+*.timestamp-*.mjs
+
+# Local dev logs
+*.log
+
+# Local-only working notes (not part of the shared codebase)
+docs/PROJECT_STATUS.md

@@ -1,0 +1,33 @@
+# Build context for the API image is the REPOSITORY ROOT (npm workspaces need the
+# root package.json + package-lock.json to install reproducibly):
+#   docker build -f backend/Dockerfile .
+# Keep the context small — everything not needed to build is excluded.
+
+# dependencies and build output
+**/node_modules
+**/dist
+**/build
+**/.vite
+
+# environment / secrets
+**/.env
+**/.env.*
+!**/.env.example
+
+# local data
+.local/
+*.log
+coverage/
+
+# docs & design source (not needed to build)
+_design_ref/
+docs/
+*.md
+!README.md
+
+# vcs / editor
+.git
+.gitignore
+.vscode
+.idea
+**/*.tsbuildinfo

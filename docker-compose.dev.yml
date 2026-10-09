@@ -1,0 +1,89 @@
+# =============================================================================
+# Stake It — fully local development stack (self-hosted PostgreSQL)
+#
+# Use this when you do NOT want to point at a managed database:
+#
+#   docker compose -f docker-compose.dev.yml up -d --build
+#   docker compose -f docker-compose.dev.yml exec api npx --no-install prisma db push
+#   docker compose -f docker-compose.dev.yml exec api npm run db:seed
+#
+# The `environment` block below intentionally OVERRIDES the DATABASE_URL in .env
+# so the containers talk to the bundled postgres instead of Supabase.
+# =============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: stakeit-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-stakeit}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stakeit_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-stakeit}
+    ports:
+      # Host port 5433 avoids clashing with a native PostgreSQL on 5432.
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - stakeit-pgdata:/var/lib/postgresql/data
+    networks:
+      - stakeit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-stakeit} -d ${POSTGRES_DB:-stakeit}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: stake-it-api:dev
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: development
+      PORT: "4000"
+      DATABASE_URL: postgresql://${POSTGRES_USER:-stakeit}:${POSTGRES_PASSWORD:-stakeit_dev_password}@postgres:5432/${POSTGRES_DB:-stakeit}?schema=public
+      # Local auth needs no external service.
+      AUTH_PROVIDER: local
+      JWT_SECRET: ${JWT_SECRET:-local_development_secret_change_me}
+      CORS_ORIGIN: http://localhost:${WEB_PORT:-8080},http://localhost:5173
+      LOG_LEVEL: debug
+    ports:
+      - "${API_PORT:-4000}:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - stakeit
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_ENABLE_DEMO_LOGIN: "true"
+    image: stake-it-web:dev
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks:
+      - stakeit
+
+volumes:
+  stakeit-pgdata:
+
+networks:
+  stakeit:
+    driver: bridge

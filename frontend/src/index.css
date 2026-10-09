@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Base layer — mirrors the supplied design system:
+ *  - 4px rhythm, hairline borders, zero decorative shadow
+ *  - Inter everywhere, tabular figures for every points value
+ *  - colour reserved for state (stake / earned / at-risk / locked)
+ */
+@layer base {
+  html,
+  body {
+    margin: 0;
+    padding: 0;
+  }
+
+  body {
+    background-color: theme('colors.background');
+    color: theme('colors.on-surface');
+    font-family: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Points balances, stake values, countdowns and percentages must align. */
+  .tabular,
+  table,
+  .font-mono {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  :focus-visible {
+    outline: 2px solid theme('colors.primary-container');
+    outline-offset: 1px;
+  }
+
+  /* Material Symbols, sized inline with text. */
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    font-size: inherit;
+    line-height: 1;
+    user-select: none;
+    vertical-align: middle;
+  }
+}
+
+@layer components {
+  /* Hairline-bordered white container — the only elevation in this system. */
+  .surface-card {
+    @apply bg-surface-container-lowest border border-outline-variant rounded-xl;
+  }
+
+  .hairline {
+    @apply border-outline-variant;
+  }
+
+  /* Uppercase micro-label used for tags such as EARNED / LOCKED / FORFEIT. */
+  .micro-label {
+    @apply font-label-xs text-label-xs uppercase tracking-wider;
+  }
+
+  .metric {
+    @apply font-mono tabular;
+  }
+
+  /* 2-3px progress tracks, rectangle fills, no glow, no capsule ends. */
+  .progress-track {
+    @apply w-full h-[3px] bg-surface-container-high overflow-hidden rounded-none;
+  }
+
+  .progress-fill {
+    @apply h-full rounded-none transition-[width] duration-300 ease-out;
+  }
+}
+
+/* Printing a settlement receipt should stay legible. */
+@media print {
+  header,
+  footer,
+  nav {
+    display: none !important;
+  }
+}

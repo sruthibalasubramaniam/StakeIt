@@ -1,0 +1,75 @@
+# =============================================================================
+# Stake It — production-oriented stack
+#
+# The database is managed (Supabase PostgreSQL), so NO database container runs
+# here: the API connects to DATABASE_URL from .env. For a fully local stack with
+# its own PostgreSQL, use docker-compose.dev.yml instead.
+#
+#   cp .env.example .env      # fill in DATABASE_URL (and JWT_SECRET)
+#   docker compose build
+#   docker compose up -d
+#   docker compose logs -f api
+#   docker compose down
+#
+# Build context is the repository root because this is an npm workspaces monorepo.
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: stake-it-api:latest
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      # Trust exactly one proxy hop (the web container) when reading
+      # X-Forwarded-* headers, so express-rate-limit sees real client IPs.
+      TRUST_PROXY: "1"
+    # The API is only reachable from the host loopback in the default stack;
+    # nginx reaches it over the compose network as `api:4000`.
+    ports:
+      - "127.0.0.1:${API_PORT:-4000}:4000"
+    networks:
+      - stakeit
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4000/api/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        # Same-origin API path; nginx proxies /api to the api service.
+        # Set to an absolute URL (e.g. https://api.example.com/api) only when the
+        # API is served from a different origin — and add that origin to
+        # CORS_ORIGIN in .env.
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_APP_NAME: ${VITE_APP_NAME:-Stake It}
+        VITE_ENABLE_DEMO_LOGIN: ${VITE_ENABLE_DEMO_LOGIN:-true}
+    image: stake-it-web:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    networks:
+      - stakeit
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+networks:
+  stakeit:
+    driver: bridge
