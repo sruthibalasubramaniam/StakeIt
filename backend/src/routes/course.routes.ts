@@ -12,7 +12,7 @@ import { AnalyticsController } from '../controllers/analytics.controller';
 import { authenticate, optionalAuthenticate } from '../middleware/authenticate';
 import { requireAuth, requireRole } from '../middleware/authorize';
 import { validate } from '../middleware/validate';
-import { uuidParam, idParam } from '../validators/schemas';
+import { uuidParam, idParam, courseRefParam } from '../validators/schemas';
 import {
   commitmentOptionsSchema,
   contentSchema,
@@ -37,7 +37,8 @@ export const courseRouter = Router();
 courseRouter.get('/', optionalAuthenticate, validate({ query: courseListQuery }), CatalogueController.browse);
 courseRouter.get('/facets', CourseController.facets);
 
-courseRouter.get('/:id', optionalAuthenticate, validate({ params: idParam }), CourseController.detail);
+// Addressed as `/courses/:idOrSlug` by the client — UUID, slug or course code.
+courseRouter.get('/:id', optionalAuthenticate, validate({ params: courseRefParam }), CourseController.detail);
 
 courseRouter.get(
   '/:id/recommendation',
@@ -47,7 +48,7 @@ courseRouter.get(
   CourseController.recommend,
 );
 
-courseRouter.get('/:id/reviews', validate({ params: idParam }), ReviewController.listForCourse);
+courseRouter.get('/:id/reviews', validate({ params: courseRefParam }), ReviewController.listForCourse);
 courseRouter.post(
   '/:id/reviews',
   authenticate,

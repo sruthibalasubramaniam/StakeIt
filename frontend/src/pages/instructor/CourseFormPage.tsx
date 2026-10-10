@@ -7,6 +7,7 @@ import { Alert, Card, CardHeader, ErrorBlock, LoadingBlock, MetricRow, SectionHe
 import { Input, Select, Textarea } from '../../components/ui/forms';
 import { useToast } from '../../context/ToastContext';
 import { errorMessage } from '../../services/api';
+import { useCourseAreaBase } from '../../router/routeAccess';
 import { formatPoints } from '../../utils/format';
 
 const DIFFICULTY_OPTIONS = ['BEGINNER', 'INTERMEDIATE', 'ADVANCED', 'EXPERT'].map((value) => ({
@@ -68,6 +69,9 @@ export function CourseFormPage() {
   const { courseId } = useParams<{ courseId: string }>();
   const navigate = useNavigate();
   const toast = useToast();
+  // Course authoring lives under /instructor/courses for instructors and
+  // /admin/courses for administrators.
+  const areaBase = useCourseAreaBase();
 
   const isEdit = Boolean(courseId);
   useDocumentTitle(isEdit ? 'Edit course' : 'Create course');
@@ -144,7 +148,7 @@ export function CourseFormPage() {
       } else {
         const created = await courseApi.create(payload);
         toast.success('Course created', 'Add modules and a final assessment, then publish.');
-        navigate(`/instructor/courses/${created.id}/builder`, { replace: true });
+        navigate(`${areaBase}/${created.id}/builder`, { replace: true });
         return;
       }
     } catch (caught) {
@@ -165,7 +169,7 @@ export function CourseFormPage() {
   return (
     <div className="flex flex-col gap-space-lg">
       <Link
-        to="/instructor/courses"
+        to={areaBase}
         className="inline-flex w-fit items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
       >
         <MaterialIcon name="arrow_back" className="text-[16px]" />
@@ -178,7 +182,7 @@ export function CourseFormPage() {
         meta={
           <div className="flex items-center gap-space-sm">
             {isEdit ? (
-              <Link to={`/instructor/courses/${courseId}/builder`}>
+              <Link to={`${areaBase}/${courseId}/builder`}>
                 <Button variant="secondary" icon="construction">
                   Open builder
                 </Button>

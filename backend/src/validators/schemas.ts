@@ -22,6 +22,15 @@ export const paginationQuery = z.object({
 
 export const idParam = z.object({ id: uuidParam });
 
+/**
+ * A course reference as it appears in a URL.
+ *
+ * Courses are addressable by UUID, slug or human code (`/courses/:idOrSlug`), so
+ * this deliberately does NOT require a UUID — the client only ever has the slug
+ * from the catalogue. Resolution happens in the service layer.
+ */
+export const courseRefParam = z.object({ id: z.string().trim().min(1, 'A valid id is required.').max(200) });
+
 const optionalTrimmed = (max = 5000) =>
   z
     .string()

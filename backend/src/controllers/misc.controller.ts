@@ -103,7 +103,11 @@ export const ReviewController = {
   }),
 
   listForCourse: asyncHandler(async (req: Request, res: Response) => {
-    const courseId = req.params.id as string;
+    // The route accepts a UUID, slug or course code, so resolve it first —
+    // otherwise the review query would silently match nothing for a slug.
+    const courseId = await CourseService.resolveId(req.params.id as string);
+    if (!courseId) throw notFound('Course');
+
     const reviews = await prisma.courseReview.findMany({
       where: { courseId, isPublished: true },
       orderBy: { createdAt: 'desc' },

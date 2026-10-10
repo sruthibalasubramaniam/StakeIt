@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { cn } from '../../utils/cn';
 import { Chip, MaterialIcon, ProgressBar } from '../ui/core';
+import { useAuth } from '../../context/AuthContext';
 import { formatCountdown, formatPercent, formatPoints, statusLabel } from '../../utils/format';
 import type { CourseSummary } from '../../types/api';
 
@@ -27,8 +28,15 @@ export function ReputationBadge({ tier, showLabel = true }: { tier: string; show
  * grid rather than shadows.
  */
 export function CourseCard({ course, className }: { course: CourseSummary; className?: string }) {
+  const { user } = useAuth();
   const enrolment = course.enrollment;
   const canEnrol = !enrolment || ['FAILED', 'WITHDRAWN'].includes(enrolment.status);
+  /*
+   * Enrolment is learner-only — the API rejects it for other roles and the
+   * routes are LEARNER-only. Instructors and administrators get a neutral
+   * "View course" link instead of a CTA that would bounce them to a 403.
+   */
+  const isLearner = user?.role === 'LEARNER';
 
   return (
     <article className={cn('surface-card flex flex-col transition-colors hover:border-outline', className)}>
@@ -103,7 +111,15 @@ export function CourseCard({ course, className }: { course: CourseSummary; class
         <span className="font-label-xs text-label-xs text-on-surface-variant">
           {course.learnerCount !== undefined ? `${course.learnerCount} learners` : statusLabel(course.status)}
         </span>
-        {enrolment && enrolment.status === 'ACTIVE' ? (
+        {!isLearner ? (
+          <Link
+            to={`/courses/${course.slug}`}
+            className="inline-flex items-center gap-1 font-label-sm text-label-sm font-medium text-primary transition-transform hover:translate-x-0.5"
+          >
+            View course
+            <MaterialIcon name="arrow_forward" className="text-[16px]" />
+          </Link>
+        ) : enrolment && enrolment.status === 'ACTIVE' ? (
           <Link
             to={`/learn/${enrolment.id}`}
             className="inline-flex items-center gap-1 font-label-sm text-label-sm font-medium text-primary transition-transform hover:translate-x-0.5"

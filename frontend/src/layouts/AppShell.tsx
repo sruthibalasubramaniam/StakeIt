@@ -1,9 +1,10 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { cn } from '../utils/cn';
 import { useAuth } from '../context/AuthContext';
 import { Avatar, MaterialIcon, Spinner } from '../components/ui/core';
 import { notificationApi } from '../services/endpoints';
+import { homePathFor } from '../router/routeAccess';
 import type { Role } from '../types/api';
 
 interface NavItem {
@@ -36,24 +37,13 @@ const NAV_BY_ROLE: Record<Role, NavItem[]> = {
   ],
 };
 
-/** Where each role lands after authenticating. */
-export function homePathFor(role: Role): string {
-  switch (role) {
-    case 'INSTRUCTOR':
-      return '/instructor/dashboard';
-    case 'ADMIN':
-      return '/admin/dashboard';
-    default:
-      return '/dashboard';
-  }
-}
-
 /**
  * Application chrome: fixed header (wordmark · role chip · nav · balance ·
  * notifications · avatar) plus the footer from the supplied design.
  */
 export function AppShell() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -181,7 +171,15 @@ export function AppShell() {
                       <button
                         type="button"
                         role="menuitem"
-                        onClick={() => void logout()}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          setMobileOpen(false);
+                          // Sign out straight to /login with no `from` state. Without
+                          // this the guard captured the current role-owned path and the
+                          // next sign-in was bounced back into it — and, for a different
+                          // role, straight into a 403 "Back to safety" screen.
+                          void logout().finally(() => navigate('/login', { replace: true }));
+                        }}
                         className="block w-full px-space-md py-space-sm text-left font-label-sm text-label-sm text-error hover:bg-error-container/30"
                       >
                         Sign out

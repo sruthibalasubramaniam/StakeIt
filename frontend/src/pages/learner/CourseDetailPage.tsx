@@ -9,6 +9,7 @@ import { ReputationBadge, DifficultyChip } from '../../components/domain/CourseC
 import { StakeRewardPanel } from '../../components/domain/AccountabilityPanels';
 import { ReviewList } from '../../components/domain/ReviewPanel';
 import { useAuth } from '../../context/AuthContext';
+import { courseAreaBaseFor } from '../../router/routeAccess';
 import { formatDate, formatPercent, formatPoints } from '../../utils/format';
 import { ReviewModal } from '../../components/domain/ReviewPanel';
 import { useToast } from '../../context/ToastContext';
@@ -45,6 +46,9 @@ export function CourseDetailPage() {
   const totalContent = detail.modules.reduce((sum, module) => sum + module.contents.length, 0);
   const isOwner = user?.id === detail.instructor.id;
   const alreadyCompleted = enrollment?.status === 'COMPLETED';
+  const isLearner = user?.role === 'LEARNER';
+  // `/admin/courses` for administrators, `/instructor/courses` for instructors.
+  const authoringBase = user ? courseAreaBaseFor(user.role) : null;
 
   const submitReview = async (input: {
     rating: number;
@@ -97,31 +101,49 @@ export function CourseDetailPage() {
             <p className="font-body-md text-body-md text-on-surface-variant">{detail.shortDescription}</p>
           </div>
 
+          {/*
+            The primary action follows the signed-in role. Enrolment is
+            learner-only; instructors and administrators are sent to the
+            authoring tools of their *own* area rather than into another
+            role's routes.
+          */}
           <div className="flex shrink-0 flex-col items-start gap-space-sm lg:items-end">
-            {enrollment && enrollment.status === 'ACTIVE' ? (
-              <Link to={`/learn/${enrollment.id}`}>
-                <Button size="lg" iconRight="arrow_forward">
-                  Resume course
-                </Button>
-              </Link>
-            ) : alreadyCompleted ? (
-              <Link to={`/learn/${enrollment!.id}/completion`}>
-                <Button size="lg" variant="secondary" iconRight="receipt_long">
-                  View completion receipt
-                </Button>
-              </Link>
-            ) : isOwner ? (
-              <Link to={`/instructor/courses/${detail.id}/builder`}>
+            {isLearner ? (
+              enrollment && enrollment.status === 'ACTIVE' ? (
+                <Link to={`/learn/${enrollment.id}`}>
+                  <Button size="lg" iconRight="arrow_forward">
+                    Resume course
+                  </Button>
+                </Link>
+              ) : alreadyCompleted ? (
+                <Link to={`/learn/${enrollment!.id}/completion`}>
+                  <Button size="lg" variant="secondary" iconRight="receipt_long">
+                    View completion receipt
+                  </Button>
+                </Link>
+              ) : (
+                <Link to={`/courses/${detail.slug}/enroll`}>
+                  <Button size="lg" iconRight="arrow_forward">
+                    Enrol &amp; stake {formatPoints(detail.baseStake, { suffix: false })} pts
+                  </Button>
+                </Link>
+              )
+            ) : isOwner && authoringBase ? (
+              <Link to={`${authoringBase}/${detail.id}/builder`}>
                 <Button size="lg" variant="secondary" iconRight="edit">
                   Open course builder
                 </Button>
               </Link>
-            ) : (
-              <Link to={`/courses/${detail.slug}/enroll`}>
-                <Button size="lg" iconRight="arrow_forward">
-                  Enrol &amp; stake {formatPoints(detail.baseStake, { suffix: false })} pts
+            ) : user?.role === 'ADMIN' ? (
+              <Link to="/admin/courses">
+                <Button size="lg" variant="secondary" iconRight="settings">
+                  Manage courses
                 </Button>
               </Link>
+            ) : (
+              <span className="rounded border border-outline-variant bg-surface-container-low px-space-md py-space-sm font-label-xs text-label-xs text-on-surface-variant">
+                Enrolment is for learner accounts — you are viewing this course as an instructor.
+              </span>
             )}
             <span className="font-label-xs text-label-xs text-on-surface-variant">
               {detail.durationDays} days · {detail.modules.length} modules · {totalContent} items

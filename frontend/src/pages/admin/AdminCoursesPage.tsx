@@ -56,10 +56,17 @@ export function AdminCoursesPage() {
         eyebrow="Platform administration"
         title="Courses"
         meta={
-          <span className="flex items-baseline gap-1.5">
-            <span className="micro-label text-on-surface-variant">Total:</span>
-            <span className="font-mono text-label-md tabular text-on-surface">{courses.data?.pagination.total ?? 0}</span>
-          </span>
+          <div className="flex items-center gap-space-md">
+            <span className="flex items-baseline gap-1.5">
+              <span className="micro-label text-on-surface-variant">Total:</span>
+              <span className="font-mono text-label-md tabular text-on-surface">{courses.data?.pagination.total ?? 0}</span>
+            </span>
+            <Link to="/admin/courses/create">
+              <Button icon="add" size="sm">
+                Create course
+              </Button>
+            </Link>
+          </div>
         }
       />
 
@@ -163,13 +170,20 @@ export function AdminCoursesPage() {
                   align: 'right',
                   render: (row) => (
                     <div className="flex items-center justify-end gap-space-xs">
-                      <Link to={`/instructor/courses/${row.id}/builder`}>
+                      {/* Admin-scoped authoring routes — an administrator never
+                          leaves the /admin surface. */}
+                      <Link to={`/admin/courses/${row.id}/builder`}>
                         <Button size="sm" variant="secondary" icon="construction">
                           Builder
                         </Button>
                       </Link>
-                      <Link to={`/instructor/courses/${row.id}/learners`}>
+                      <Link to={`/admin/courses/${row.id}/learners`}>
                         <Button size="sm" variant="ghost" icon="group">
+                          {''}
+                        </Button>
+                      </Link>
+                      <Link to={`/admin/courses/${row.id}/analytics`}>
+                        <Button size="sm" variant="ghost" icon="insights">
                           {''}
                         </Button>
                       </Link>

@@ -7,6 +7,7 @@ import { Alert, Card, CardHeader, EmptyState, ErrorBlock, LoadingBlock, Modal, S
 import { Input, Select, Switch, Textarea } from '../../components/ui/forms';
 import { useToast } from '../../context/ToastContext';
 import { errorMessage } from '../../services/api';
+import { useCourseAreaBase } from '../../router/routeAccess';
 import { formatDate, formatPoints } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import type { CommitmentOption, ContentType, ModuleAuthoring } from '../../types/api';
@@ -42,6 +43,8 @@ const EMPTY_QUESTION: QuestionDraft = {
 export function CourseBuilderPage() {
   const { courseId = '' } = useParams<{ courseId: string }>();
   const toast = useToast();
+  // Instructors stay under /instructor/courses, administrators under /admin/courses.
+  const areaBase = useCourseAreaBase();
 
   useDocumentTitle('Course builder');
 
@@ -300,7 +303,7 @@ export function CourseBuilderPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-space-md">
         <Link
-          to="/instructor/courses"
+          to={areaBase}
           className="inline-flex items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
         >
           <MaterialIcon name="arrow_back" className="text-[16px]" />
@@ -356,7 +359,7 @@ export function CourseBuilderPage() {
             title="Course information"
             subtitle="01 / Foundation"
             action={
-              <Link to={`/instructor/courses/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
+              <Link to={`${areaBase}/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
                 Edit
               </Link>
             }
@@ -375,7 +378,7 @@ export function CourseBuilderPage() {
             title="Stake & rewards"
             subtitle="02 / Accountability economics"
             action={
-              <Link to={`/instructor/courses/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
+              <Link to={`${areaBase}/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
                 Edit
               </Link>
             }
@@ -406,7 +409,7 @@ export function CourseBuilderPage() {
             title="Weights & pace"
             subtitle="03 / Schedule"
             action={
-              <Link to={`/instructor/courses/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
+              <Link to={`${areaBase}/${courseId}/edit`} className="font-label-sm text-label-sm text-primary hover:underline">
                 Edit
               </Link>
             }

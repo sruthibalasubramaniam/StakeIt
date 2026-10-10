@@ -5,12 +5,14 @@ import { Button, Divider, MaterialIcon } from '../../components/ui/core';
 import { Card, CardHeader, ErrorBlock, LoadingBlock, MetricRow, SectionHeader, StatCard } from '../../components/ui/data';
 import { BarList, RatingDistribution, ScoreGauge } from '../../components/domain/Charts';
 import { ReviewList } from '../../components/domain/ReviewPanel';
+import { useCourseAreaBase } from '../../router/routeAccess';
 import { formatPercent } from '../../utils/format';
 
 /** Per-course analytics: funnel, scores, commitment performance and ratings. */
 export function CourseAnalyticsPage() {
   const { courseId = '' } = useParams<{ courseId: string }>();
   useDocumentTitle('Course analytics');
+  const areaBase = useCourseAreaBase();
 
   const analytics = useAsync(() => courseApi.analytics(courseId), [courseId]);
   const detail = useAsync(() => courseApi.preview(courseId).catch(() => null), [courseId]);
@@ -31,7 +33,7 @@ export function CourseAnalyticsPage() {
   return (
     <div className="flex flex-col gap-space-lg">
       <Link
-        to="/instructor/courses"
+        to={areaBase}
         className="inline-flex w-fit items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
       >
         <MaterialIcon name="arrow_back" className="text-[16px]" />
@@ -43,12 +45,12 @@ export function CourseAnalyticsPage() {
         title={course.title}
         meta={
           <div className="flex items-center gap-space-sm">
-            <Link to={`/instructor/courses/${courseId}/builder`}>
+            <Link to={`${areaBase}/${courseId}/builder`}>
               <Button variant="secondary" icon="construction">
                 Builder
               </Button>
             </Link>
-            <Link to={`/instructor/courses/${courseId}/learners`}>
+            <Link to={`${areaBase}/${courseId}/learners`}>
               <Button variant="secondary" icon="group">
                 Learners
               </Button>

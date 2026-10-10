@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { courseApi, enrollmentApi } from '../../services/endpoints';
 import { useAsync, useDocumentTitle } from '../../hooks';
 import { Button, Chip, Divider, MaterialIcon } from '../../components/ui/core';
@@ -62,6 +62,20 @@ export function EnrollmentPage() {
   }
 
   const detail = course.data;
+
+  /*
+   * A second enrolment is impossible — the API rejects it. Showing the staking
+   * form to someone who is already enrolled (or already finished) would just
+   * invite an action that cannot succeed, so send them where they belong.
+   * This also covers a hand-typed /courses/:slug/enroll URL.
+   */
+  if (detail.enrollment?.status === 'ACTIVE') {
+    return <Navigate to={`/learn/${detail.enrollment.id}`} replace />;
+  }
+  if (detail.enrollment?.status === 'COMPLETED') {
+    return <Navigate to={`/learn/${detail.enrollment.id}/completion`} replace />;
+  }
+
   const baseStake = detail.baseStake;
   const commitmentStake = accelerated && selectedOption ? selectedOption.commitmentStake : 0;
   const totalStake = baseStake + commitmentStake;

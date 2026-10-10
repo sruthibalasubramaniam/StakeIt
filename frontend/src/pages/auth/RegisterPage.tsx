@@ -6,7 +6,7 @@ import { Input, Radio } from '../../components/ui/forms';
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentTitle } from '../../hooks';
 import { errorMessage } from '../../services/api';
-import { homePathFor } from '../../layouts/AppShell';
+import { homePathFor } from '../../router/routeAccess';
 
 type RegisterRole = 'LEARNER' | 'INSTRUCTOR';
 

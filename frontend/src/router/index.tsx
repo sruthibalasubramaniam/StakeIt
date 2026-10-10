@@ -1,10 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { AppShell, homePathFor } from '../layouts/AppShell';
+import { AppShell } from '../layouts/AppShell';
 import { AuthLayout } from '../layouts/AuthLayout';
-import { ProtectedRoute } from './ProtectedRoute';
+import { ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import { RouteErrorPage } from '../pages/errors/ErrorPages';
 import { useAuth } from '../context/AuthContext';
 import { AppBootSplash } from '../layouts/AppShell';
+import { homePathFor } from './routeAccess';
 
 /* Auth */
 import { LoginPage } from '../pages/auth/LoginPage';
@@ -66,10 +67,24 @@ function RoleHome() {
 export function AppRoutes() {
   return (
     <Routes>
-      {/* Public */}
+      {/* Public — signed-in visitors are sent to their own role's home */}
       <Route element={<AuthLayout />} errorElement={<RouteErrorPage />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+        <Route
+          path="/login"
+          element={
+            <PublicOnlyRoute>
+              <LoginPage />
+            </PublicOnlyRoute>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <PublicOnlyRoute>
+              <RegisterPage />
+            </PublicOnlyRoute>
+          }
+        />
       </Route>
 
       {/* Authenticated application shell */}
@@ -170,11 +185,16 @@ export function AppRoutes() {
         <Route path="/profile" element={<ProfilePage />} />
         <Route path="/instructors/:instructorId" element={<InstructorProfilePage />} />
 
-        {/* Instructor */}
+        {/*
+          Instructor area — INSTRUCTOR only.
+          Authoring screens are mounted once for instructors here and once for
+          administrators under /admin/courses below, so no role is ever routed
+          into another role's surface.
+        */}
         <Route
           path="/instructor/dashboard"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <InstructorDashboardPage />
             </ProtectedRoute>
           }
@@ -182,7 +202,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <InstructorCoursesPage />
             </ProtectedRoute>
           }
@@ -190,7 +210,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses/create"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <CourseFormPage />
             </ProtectedRoute>
           }
@@ -198,7 +218,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses/:courseId/edit"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <CourseFormPage />
             </ProtectedRoute>
           }
@@ -206,7 +226,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses/:courseId/builder"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <CourseBuilderPage />
             </ProtectedRoute>
           }
@@ -214,7 +234,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses/:courseId/learners"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <CourseLearnersPage />
             </ProtectedRoute>
           }
@@ -222,7 +242,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/courses/:courseId/analytics"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <CourseAnalyticsPage />
             </ProtectedRoute>
           }
@@ -230,7 +250,7 @@ export function AppRoutes() {
         <Route
           path="/instructor/profile"
           element={
-            <ProtectedRoute allow={['INSTRUCTOR', 'ADMIN']}>
+            <ProtectedRoute allow={['INSTRUCTOR']}>
               <ProfilePage />
             </ProtectedRoute>
           }
@@ -244,6 +264,13 @@ export function AppRoutes() {
         <Route path="/admin/reward-pool" element={<ProtectedRoute allow={['ADMIN']}><AdminRewardPoolPage /></ProtectedRoute>} />
         <Route path="/admin/badges" element={<ProtectedRoute allow={['ADMIN']}><AdminBadgesPage /></ProtectedRoute>} />
         <Route path="/admin/analytics" element={<ProtectedRoute allow={['ADMIN']}><AdminAnalyticsPage /></ProtectedRoute>} />
+
+        {/* Admin course authoring — the admin-side mirror of the instructor area */}
+        <Route path="/admin/courses/create" element={<ProtectedRoute allow={['ADMIN']}><CourseFormPage /></ProtectedRoute>} />
+        <Route path="/admin/courses/:courseId/edit" element={<ProtectedRoute allow={['ADMIN']}><CourseFormPage /></ProtectedRoute>} />
+        <Route path="/admin/courses/:courseId/builder" element={<ProtectedRoute allow={['ADMIN']}><CourseBuilderPage /></ProtectedRoute>} />
+        <Route path="/admin/courses/:courseId/learners" element={<ProtectedRoute allow={['ADMIN']}><CourseLearnersPage /></ProtectedRoute>} />
+        <Route path="/admin/courses/:courseId/analytics" element={<ProtectedRoute allow={['ADMIN']}><CourseAnalyticsPage /></ProtectedRoute>} />
       </Route>
 
       {/* Landing + catch-all */}

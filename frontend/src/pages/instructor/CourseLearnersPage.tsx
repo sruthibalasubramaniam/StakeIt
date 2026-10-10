@@ -7,6 +7,7 @@ import { Alert, Card, DataTable, EmptyState, ErrorBlock, LoadingBlock, SectionHe
 import { SearchInput } from '../../components/ui/forms';
 import { useToast } from '../../context/ToastContext';
 import { errorMessage } from '../../services/api';
+import { useCourseAreaBase } from '../../router/routeAccess';
 import { formatDate, formatPercent, formatPoints, statusLabel } from '../../utils/format';
 import { cn } from '../../utils/cn';
 import type { CourseAnalytics } from '../../types/api';
@@ -18,6 +19,7 @@ export function CourseLearnersPage() {
   const { courseId = '' } = useParams<{ courseId: string }>();
   const toast = useToast();
   useDocumentTitle('Course learners');
+  const areaBase = useCourseAreaBase();
 
   const analytics = useAsync(() => courseApi.analytics(courseId), [courseId]);
   const [query, setQuery] = useState('');
@@ -51,7 +53,7 @@ export function CourseLearnersPage() {
   return (
     <div className="flex flex-col gap-space-lg">
       <Link
-        to="/instructor/courses"
+        to={areaBase}
         className="inline-flex w-fit items-center gap-1.5 font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
       >
         <MaterialIcon name="arrow_back" className="text-[16px]" />
@@ -62,7 +64,7 @@ export function CourseLearnersPage() {
         eyebrow={`Course ${course.code}`}
         title={course.title}
         meta={
-          <Link to={`/instructor/courses/${courseId}/analytics`}>
+          <Link to={`${areaBase}/${courseId}/analytics`}>
             <Button variant="secondary" icon="insights">
               Analytics
             </Button>

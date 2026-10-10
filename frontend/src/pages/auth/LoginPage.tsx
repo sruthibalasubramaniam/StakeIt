@@ -1,25 +1,16 @@
 import { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Button, Divider, MaterialIcon } from '../../components/ui/core';
+import { Button, Divider } from '../../components/ui/core';
 import { Alert } from '../../components/ui/data';
 import { Input } from '../../components/ui/forms';
 import { useAuth } from '../../context/AuthContext';
 import { useDocumentTitle } from '../../hooks';
 import { errorMessage } from '../../services/api';
-import { homePathFor } from '../../layouts/AppShell';
+import { homePathFor, isPathAllowedForRole, pathnameOf } from '../../router/routeAccess';
 
 interface LocationState {
   from?: string;
 }
-
-const DEMO_ACCOUNTS = [
-  { label: 'Learner', email: 'learner@stakeit.demo' },
-  { label: 'Instructor', email: 'instructor@stakeit.demo' },
-  { label: 'Admin', email: 'admin@stakeit.demo' },
-];
-
-const DEMO_PASSWORD = 'Password123';
-const demoLoginEnabled = import.meta.env.VITE_ENABLE_DEMO_LOGIN !== 'false';
 
 export function LoginPage() {
   useDocumentTitle('Sign in');
@@ -34,13 +25,23 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = async (loginEmail: string, loginPassword: string) => {
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
-      const user = await login(loginEmail, loginPassword);
-      // Honour the route the user was originally trying to reach.
-      navigate(state?.from ?? homePathFor(user.role), { replace: true });
+      const user = await login(email, password);
+      /*
+       * Honour the route the user was originally trying to reach, but only if
+       * the role that just signed in can actually open it. The guard captures
+       * `from` on every unauthenticated hit — including the redirect that
+       * follows a sign-out — so without this check, signing in as a different
+       * role landed on the previous role's page and rendered "Back to safety".
+       */
+      const requested = state?.from;
+      const destination =
+        requested && isPathAllowedForRole(pathnameOf(requested), user.role) ? requested : homePathFor(user.role);
+      navigate(destination, { replace: true });
     } catch (caught) {
       setError(errorMessage(caught));
     } finally {
@@ -69,13 +70,7 @@ export function LoginPage() {
         </Alert>
       ) : null}
 
-      <form
-        className="flex flex-col gap-space-md"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submit(email, password);
-        }}
-      >
+      <form className="flex flex-col gap-space-md" onSubmit={(event) => void submit(event)}>
         <Input
           label="Email"
           type="email"
@@ -101,37 +96,6 @@ export function LoginPage() {
           Sign in
         </Button>
       </form>
-
-      {demoLoginEnabled ? (
-        <>
-          <div className="flex items-center gap-space-md">
-            <Divider className="flex-1" />
-            <span className="micro-label text-on-surface-variant">Demo accounts</span>
-            <Divider className="flex-1" />
-          </div>
-
-          <div className="flex flex-col gap-space-sm">
-            <div className="grid grid-cols-3 gap-space-sm">
-              {DEMO_ACCOUNTS.map((account) => (
-                <Button
-                  key={account.email}
-                  size="sm"
-                  variant="secondary"
-                  disabled={submitting}
-                  onClick={() => void submit(account.email, DEMO_PASSWORD)}
-                >
-                  {account.label}
-                </Button>
-              ))}
-            </div>
-            <p className="flex items-start gap-1.5 font-label-xs text-label-xs text-on-surface-variant">
-              <MaterialIcon name="info" className="mt-0.5 text-[13px]" />
-              Seeded demo data. Password for every account is <span className="font-mono">{DEMO_PASSWORD}</span>. These accounts
-              only exist after <span className="font-mono">npm run db:seed</span>.
-            </p>
-          </div>
-        </>
-      ) : null}
 
       <Divider />
 

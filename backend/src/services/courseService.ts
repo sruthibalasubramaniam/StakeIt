@@ -254,6 +254,21 @@ export function toCourseDetail(
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * `Course.id` is a Postgres `uuid` column. Passing a slug into the `id` branch of
+ * a Prisma filter makes the database reject the cast before the `OR` is even
+ * evaluated, so branch on the shape of the reference instead.
+ */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Where-clause for a course addressed by UUID, slug or human code. */
+export function courseRefWhere(ref: string): Prisma.CourseWhereInput {
+  const value = ref.trim();
+  return UUID_PATTERN.test(value)
+    ? { OR: [{ id: value }, { slug: value }, { code: value }] }
+    : { OR: [{ slug: value }, { code: value }] };
+}
+
 export function slugify(value: string): string {
   return value
     .toLowerCase()
@@ -420,9 +435,18 @@ export const CourseService = {
     };
   },
 
+  /** Resolves a URL course reference (UUID · slug · code) to the course id. */
+  async resolveId(idOrSlug: string): Promise<string | null> {
+    const course = await prisma.course.findFirst({
+      where: courseRefWhere(idOrSlug),
+      select: { id: true },
+    });
+    return course?.id ?? null;
+  },
+
   async getByIdOrSlug(idOrSlug: string, viewer?: { role: string; userId: string }) {
     const course = await prisma.course.findFirst({
-      where: { OR: [{ id: idOrSlug }, { slug: idOrSlug }, { code: idOrSlug }] },
+      where: courseRefWhere(idOrSlug),
       include: {
         instructor: { select: instructorSelect },
         commitmentOptions: { where: { isActive: true }, orderBy: { orderIndex: 'asc' } },

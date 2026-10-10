@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { prisma } from '../lib/prisma';
 import { CourseService } from '../services/courseService';
 import { CurriculumService } from '../services/curriculumService';
 import { RecommendationService } from '../services/recommendationService';
@@ -18,7 +19,20 @@ export const CourseController = {
 
   detail: asyncHandler(async (req: Request, res: Response) => {
     const result = await CourseService.getByIdOrSlug(req.params.id as string, req.auth);
-    res.status(200).json({ data: result });
+
+    /*
+     * Attach the viewer's own enrolment, exactly as the catalogue does. Without
+     * it the detail screen cannot tell an existing learner from a new one, so it
+     * offered "Enrol & stake" to someone already enrolled — or already finished.
+     */
+    const enrollment = req.auth
+      ? await prisma.enrollment.findUnique({
+          where: { userId_courseId: { userId: req.auth.userId, courseId: result.id } },
+          select: { id: true, courseId: true, status: true, attemptCount: true },
+        })
+      : null;
+
+    res.status(200).json({ data: { ...result, enrollment: enrollment ?? null } });
   }),
 
   create: asyncHandler(async (req: Request, res: Response) => {
