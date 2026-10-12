@@ -24,7 +24,7 @@ export function EnrollmentPage() {
   const { idOrSlug = '' } = useParams<{ idOrSlug: string }>();
   const navigate = useNavigate();
   const toast = useToast();
-  const { user } = useAuth();
+  const { user, refreshProfile } = useAuth();
   const walletFromAuth = user?.wallet;
 
   const course = useAsync(() => courseApi.detail(idOrSlug), [idOrSlug]);
@@ -92,6 +92,15 @@ export function EnrollmentPage() {
         accelerated: accelerated && Boolean(selectedOption),
         commitmentOptionId: accelerated ? selectedOption?.id ?? null : null,
       });
+
+      /*
+       * Staking moves points out of the available balance, but the header chip
+       * renders `user.wallet` from AuthContext. Without this refresh the chip
+       * keeps showing the pre-stake figure until a full page reload, so the
+       * learner sees a balance that no longer matches their wallet.
+       */
+      await refreshProfile().catch(() => undefined);
+
       toast.success(
         result.isRetry ? 'Retry started' : 'Enrolment confirmed',
         result.isRetry
