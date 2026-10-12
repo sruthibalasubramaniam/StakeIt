@@ -3,6 +3,8 @@ import { cn } from '../../utils/cn';
 import { Button, MaterialIcon, ProgressBar } from '../ui/core';
 import { Alert } from '../ui/data';
 import { formatDuration, formatPercent } from '../../utils/format';
+import { parseVideoSource } from '../../utils/videoSource';
+import { YouTubeStage } from './YouTubeStage';
 
 export interface VideoProgressState {
   watchedSeconds: number;
@@ -146,101 +148,121 @@ export function VideoPlayer({
     setNotice('Scrubbing ahead does not credit completion time.');
   };
 
+  const source = parseVideoSource(src);
+
   const met = progress.isWatchRequirementMet;
   const watchedPercent = progress.validWatchPercent;
 
+  /*
+   * YouTube links are embedded; everything else is handed to the native element.
+   * See `utils/videoSource.ts` — a YouTube page is HTML, so a <video> can never
+   * play it, which is exactly why an instructor-supplied YouTube URL used to
+   * render as "source unavailable" instead of the lesson.
+   */
+  const youtube = source?.kind === 'youtube' ? source : null;
+
   return (
     <div className={cn('flex flex-col gap-space-md', className)}>
-      <div className="relative w-full overflow-hidden rounded-xl border border-outline-variant bg-[#283044]">
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-        <video
-          ref={videoRef}
-          src={src ?? undefined}
-          className="aspect-video w-full bg-[#283044]"
-          preload="metadata"
-          muted={muted}
-          onLoadedMetadata={(event) => {
-            const value = event.currentTarget.duration;
-            if (Number.isFinite(value) && value > 0) setDuration(value);
-          }}
-          onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
-          onPlay={() => setPlaying(true)}
-          onPause={() => setPlaying(false)}
-          onSeeking={handleSeek}
-          onEnded={() => {
-            setPlaying(false);
-            const previous = lastHeartbeatRef.current;
-            flush((Date.now() - previous.at) / 1000);
-          }}
-          onError={() => setLoadError(true)}
+      {youtube ? (
+        <YouTubeStage
+          videoId={youtube.videoId}
+          startSeconds={youtube.startSeconds}
+          title={title}
+          onHeartbeat={onHeartbeat}
+          onDurationKnown={(seconds) => setDuration(seconds)}
         />
-
-        {!playing ? (
-          <button
-            type="button"
-            onClick={togglePlay}
-            aria-label={position > 0 ? 'Resume video' : 'Play video'}
-            className="absolute inset-0 flex flex-col items-center justify-center gap-space-md bg-[#283044]/40 transition-colors hover:bg-[#283044]/20"
-          >
-            <span className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary-container">
-              <MaterialIcon name="play_arrow" filled className="text-[28px] text-on-primary" />
-            </span>
-            <span className="font-label-md text-label-md text-inverse-on-surface">{title}</span>
-          </button>
-        ) : null}
-
-        <div className="absolute inset-x-0 bottom-0 flex flex-col gap-space-xs bg-[#283044]/85 px-space-md py-space-sm">
-          <div className="h-0.5 w-full bg-white/20">
-            <div
-              className="h-full bg-primary-container"
-              style={{ width: `${duration > 0 ? (position / duration) * 100 : 0}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-space-md">
-              <button type="button" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'} className="text-inverse-on-surface">
-                <MaterialIcon name={playing ? 'pause' : 'play_arrow'} filled />
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  if (videoRef.current) videoRef.current.muted = !muted;
-                  setMuted((value) => !value);
-                }}
-                aria-label={muted ? 'Unmute' : 'Mute'}
-                className="text-inverse-on-surface"
-              >
-                <MaterialIcon name={muted ? 'volume_off' : 'volume_up'} />
-              </button>
-              <span className="font-mono text-label-xs tabular text-inverse-on-surface">
-                {formatDuration(position)} / {formatDuration(duration)}
+      ) : (
+        <div className="relative w-full overflow-hidden rounded-xl border border-outline-variant bg-[#283044]">
+          {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+          <video
+            ref={videoRef}
+            src={src ?? undefined}
+            className="aspect-video w-full bg-[#283044]"
+            preload="metadata"
+            muted={muted}
+            onLoadedMetadata={(event) => {
+              const value = event.currentTarget.duration;
+              if (Number.isFinite(value) && value > 0) setDuration(value);
+            }}
+            onTimeUpdate={(event) => setPosition(event.currentTarget.currentTime)}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onSeeking={handleSeek}
+            onEnded={() => {
+              setPlaying(false);
+              const previous = lastHeartbeatRef.current;
+              flush((Date.now() - previous.at) / 1000);
+            }}
+            onError={() => setLoadError(true)}
+          />
+  
+          {!playing ? (
+            <button
+              type="button"
+              onClick={togglePlay}
+              aria-label={position > 0 ? 'Resume video' : 'Play video'}
+              className="absolute inset-0 flex flex-col items-center justify-center gap-space-md bg-[#283044]/40 transition-colors hover:bg-[#283044]/20"
+            >
+              <span className="flex h-14 w-14 items-center justify-center rounded-xl bg-primary-container">
+                <MaterialIcon name="play_arrow" filled className="text-[28px] text-on-primary" />
               </span>
+              <span className="font-label-md text-label-md text-inverse-on-surface">{title}</span>
+            </button>
+          ) : null}
+  
+          <div className="absolute inset-x-0 bottom-0 flex flex-col gap-space-xs bg-[#283044]/85 px-space-md py-space-sm">
+            <div className="h-0.5 w-full bg-white/20">
+              <div
+                className="h-full bg-primary-container"
+                style={{ width: `${duration > 0 ? (position / duration) * 100 : 0}%` }}
+              />
             </div>
-            <div className="flex items-center gap-space-md">
-              <button
-                type="button"
-                onClick={() => {
-                  const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
-                  if (videoRef.current) videoRef.current.playbackRate = next;
-                  setRate(next);
-                }}
-                className="font-mono text-label-xs text-inverse-on-surface"
-                aria-label="Playback speed"
-              >
-                {rate.toFixed(1)}x
-              </button>
-              <button
-                type="button"
-                onClick={() => videoRef.current?.requestFullscreen?.()}
-                aria-label="Fullscreen"
-                className="text-inverse-on-surface"
-              >
-                <MaterialIcon name="fullscreen" />
-              </button>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-space-md">
+                <button type="button" onClick={togglePlay} aria-label={playing ? 'Pause' : 'Play'} className="text-inverse-on-surface">
+                  <MaterialIcon name={playing ? 'pause' : 'play_arrow'} filled />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (videoRef.current) videoRef.current.muted = !muted;
+                    setMuted((value) => !value);
+                  }}
+                  aria-label={muted ? 'Unmute' : 'Mute'}
+                  className="text-inverse-on-surface"
+                >
+                  <MaterialIcon name={muted ? 'volume_off' : 'volume_up'} />
+                </button>
+                <span className="font-mono text-label-xs tabular text-inverse-on-surface">
+                  {formatDuration(position)} / {formatDuration(duration)}
+                </span>
+              </div>
+              <div className="flex items-center gap-space-md">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = rate === 1 ? 1.5 : rate === 1.5 ? 2 : 1;
+                    if (videoRef.current) videoRef.current.playbackRate = next;
+                    setRate(next);
+                  }}
+                  className="font-mono text-label-xs text-inverse-on-surface"
+                  aria-label="Playback speed"
+                >
+                  {rate.toFixed(1)}x
+                </button>
+                <button
+                  type="button"
+                  onClick={() => videoRef.current?.requestFullscreen?.()}
+                  aria-label="Fullscreen"
+                  className="text-inverse-on-surface"
+                >
+                  <MaterialIcon name="fullscreen" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="flex flex-col gap-space-sm">
         <div className="flex flex-wrap items-center justify-between gap-space-md">
@@ -261,8 +283,8 @@ export function VideoPlayer({
 
       {loadError ? (
         <Alert tone="warning" title="Video source unavailable">
-          The demo asset could not be loaded in this environment. Watch tracking still applies — an instructor can point this
-          lesson at any object-storage URL, and Supabase Storage is wired up for production use.
+          This lesson's media file could not be loaded — the URL may be wrong, unreachable from your network, or served without
+          CORS headers. Watch tracking still applies: an instructor can repoint the lesson at any public MP4 or a YouTube link.
         </Alert>
       ) : null}
 

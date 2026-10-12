@@ -23,13 +23,22 @@ import { addDays, addHours } from '../src/utils/date';
 const prisma = new PrismaClient();
 
 /**
- * Public demo asset. It is a widely used, CORS-enabled sample MP4 with a
- * predictable duration. Replace `videoUrl` with your own object storage URL
- * (Supabase Storage is wired up in `lib/supabase.ts`) for real content.
+ * A lesson video reference.
+ *
+ * `seconds` is the video's *real* duration. It is stored on the content row and
+ * is what the valid-watch rule measures against, so it has to be right — a
+ * duration that is too long makes a lesson impossible to complete, and one that
+ * is too short lets a learner finish without watching.
+ *
+ * These are public YouTube videos, embedded by the client through the IFrame
+ * player (a YouTube page cannot be played by a `<video>` element). To use your
+ * own material, point `url` at a YouTube link or any public MP4 — Supabase
+ * Storage is wired up in `lib/supabase.ts` for uploaded assets.
  */
-const DEMO_VIDEO_URL =
-  'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-const DEMO_VIDEO_SECONDS = 596;
+interface VideoSeed {
+  url: string;
+  seconds: number;
+}
 
 const DEMO_PASSWORD = 'Password123';
 
@@ -168,6 +177,11 @@ interface CourseSeed {
   minFinalTestScore: number | null;
   maxAttempts: number;
   requiredWatchPercent: number;
+  /**
+   * Lesson videos for this course, consumed one per module (wrapping when a
+   * course has more modules than videos).
+   */
+  videos: VideoSeed[];
   commitmentOptions: Array<{ label: string; durationDays: number; commitmentStake: number; commitmentBonus: number; isDefault: boolean }>;
   modules: ModuleSeed[];
   finalTitle: string;
@@ -231,7 +245,9 @@ async function createCourse(seed: CourseSeed, instructorId: string): Promise<str
       },
     });
 
-    // 1. Video
+    // 1. Video — the course supplies one video per module, cycling if shorter.
+    const video = seed.videos[moduleIndex % seed.videos.length]!;
+
     await prisma.moduleContent.create({
       data: {
         moduleId: module.id,
@@ -240,9 +256,9 @@ async function createCourse(seed: CourseSeed, instructorId: string): Promise<str
         description: moduleSeed.videoDescription,
         orderIndex: 0,
         isRequired: true,
-        estimatedMinutes: 24,
-        videoUrl: DEMO_VIDEO_URL,
-        durationSeconds: DEMO_VIDEO_SECONDS,
+        estimatedMinutes: Math.max(1, Math.round(video.seconds / 60)),
+        videoUrl: video.url,
+        durationSeconds: video.seconds,
       },
     });
 
@@ -543,12 +559,14 @@ async function completeCourseFully(
 ) {
   const contents = await prisma.moduleContent.findMany({
     where: { id: { in: shape.contentIds } },
-    select: { id: true, type: true },
+    select: { id: true, type: true, durationSeconds: true },
   });
 
   for (const content of contents) {
     if (content.type === 'VIDEO') {
-      await completeContent(attemptId, userId, content.id, 'VIDEO', DEMO_VIDEO_SECONDS);
+      // Each lesson has its own video length, so the simulated watch progress
+      // must use that lesson's duration rather than a single shared constant.
+      await completeContent(attemptId, userId, content.id, 'VIDEO', content.durationSeconds ?? 0);
     } else if (content.type === 'READING') {
       await completeContent(attemptId, userId, content.id, 'READING', 0);
     }
@@ -575,6 +593,11 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Full-Stack TypeScript & Architecture',
     code: 'DEV-301',
+    videos: [
+      { url: 'https://www.youtube.com/watch?v=_QAbWfcCaKc', seconds: 2182 },
+      { url: 'https://www.youtube.com/watch?v=-SLxfsrTiSU', seconds: 1371 },
+      { url: 'https://www.youtube.com/watch?v=TlYxWnh_mPs', seconds: 2275 },
+    ],
     category: 'Software Engineering',
     difficulty: 'ADVANCED',
     shortDescription: 'Production distributed systems, strict type-level metaprogramming, and transactional patterns.',
@@ -786,6 +809,10 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Applied Systems Programming',
     code: 'CS-402',
+    videos: [
+      { url: 'https://www.youtube.com/watch?v=aeDyDIo-G44', seconds: 2933 },
+      { url: 'https://www.youtube.com/watch?v=eVpaazxsu_I', seconds: 251 },
+    ],
     category: 'Computer Science',
     difficulty: 'EXPERT',
     shortDescription: 'Memory arenas, cache alignment, and concurrency primitives from first principles.',
@@ -929,6 +956,10 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Kubernetes Fundamentals',
     code: 'OPS-109',
+    videos: [
+      { url: 'https://www.youtube.com/watch?v=Mn6Jc0AOUTE', seconds: 1725 },
+      { url: 'https://www.youtube.com/watch?v=jtf4SnGBp0E', seconds: 5760 },
+    ],
     category: 'Cloud & Operations',
     difficulty: 'INTERMEDIATE',
     shortDescription: 'Ingress controllers, service mesh overlays and workload lifecycle management.',
@@ -1062,6 +1093,10 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Statistical Arbitrage & Risk Mitigation',
     code: 'QNT-220',
+    videos: [
+      { url: 'https://www.youtube.com/watch?v=qUMW9LEv4Qw', seconds: 895 },
+      { url: 'https://www.youtube.com/watch?v=f73ItMWO4z8', seconds: 900 },
+    ],
     category: 'Quantitative Finance',
     difficulty: 'ADVANCED',
     shortDescription: 'Cointegration, pairs trading strategies and execution guards under severe regime shifts.',
@@ -1198,6 +1233,7 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Data Structures & Algorithmic Analysis',
     code: 'CS-201',
+    videos: [{ url: 'https://www.youtube.com/watch?v=Ndvm7Ge4pic', seconds: 1341 }],
     category: 'Computer Science',
     difficulty: 'BEGINNER',
     shortDescription: 'Asymptotic analysis, core data structures, and algorithmic problem-solving.',
@@ -1298,6 +1334,7 @@ const COURSES: CourseSeed[] = [
   {
     title: 'Product Analytics & Experimentation',
     code: 'PRD-140',
+    videos: [{ url: 'https://www.youtube.com/watch?v=6BERouEM_bA', seconds: 405 }],
     category: 'Product & Analytics',
     difficulty: 'INTERMEDIATE',
     shortDescription: 'Metric trees, experiment design and causal inference for product decisions.',
@@ -1467,7 +1504,7 @@ async function main(): Promise<void> {
     const firstModuleContents = await prisma.moduleContent.findMany({
       where: { id: { in: shape.contentIds } },
       orderBy: { orderIndex: 'asc' },
-      select: { id: true, type: true, moduleId: true },
+      select: { id: true, type: true, moduleId: true, durationSeconds: true },
     });
     const firstModuleId = firstModuleContents[0]!.moduleId;
 
@@ -1475,7 +1512,7 @@ async function main(): Promise<void> {
     const moduleOne = firstModuleContents.slice(0, 4);
     for (const content of moduleOne) {
       if (content.type === 'VIDEO') {
-        await completeContent(rohanEnrollment.attempt.id, learners[0]!.id, content.id, 'VIDEO', DEMO_VIDEO_SECONDS);
+        await completeContent(rohanEnrollment.attempt.id, learners[0]!.id, content.id, 'VIDEO', content.durationSeconds ?? 0);
       } else if (content.type === 'READING') {
         await completeContent(rohanEnrollment.attempt.id, learners[0]!.id, content.id, 'READING', 0);
       }
@@ -1497,16 +1534,19 @@ async function main(): Promise<void> {
     // Partial progress on module 2: video watched but not completed.
     const secondModuleVideo = firstModuleContents[4];
     if (secondModuleVideo) {
+      // Partially-watched state, expressed against that lesson's own length so
+      // the percentage means the same thing the player would report.
+      const secondVideoSeconds = secondModuleVideo.durationSeconds ?? 0;
       await prisma.contentProgress.create({
         data: {
           attemptId: rohanEnrollment.attempt.id,
           userId: learners[0]!.id,
           contentId: secondModuleVideo.id,
           status: 'IN_PROGRESS',
-          watchedSeconds: Math.round(DEMO_VIDEO_SECONDS * 0.65),
+          watchedSeconds: Math.round(secondVideoSeconds * 0.65),
           validWatchPercent: 65,
-          watchedSegments: [[0, Math.round(DEMO_VIDEO_SECONDS * 0.65)]] as unknown as object,
-          lastPositionSeconds: Math.round(DEMO_VIDEO_SECONDS * 0.65),
+          watchedSegments: [[0, Math.round(secondVideoSeconds * 0.65)]] as unknown as object,
+          lastPositionSeconds: Math.round(secondVideoSeconds * 0.65),
           activeSeconds: 400,
           firstAccessedAt: new Date(),
         },
@@ -1617,11 +1657,11 @@ async function main(): Promise<void> {
     const contents = await prisma.moduleContent.findMany({
       where: { id: { in: shape.contentIds } },
       orderBy: { orderIndex: 'asc' },
-      select: { id: true, type: true },
+      select: { id: true, type: true, durationSeconds: true },
     });
     for (const content of contents.slice(0, 2)) {
       if (content.type === 'VIDEO') {
-        await completeContent(rohanSecond.attempt.id, learners[0]!.id, content.id, 'VIDEO', DEMO_VIDEO_SECONDS);
+        await completeContent(rohanSecond.attempt.id, learners[0]!.id, content.id, 'VIDEO', content.durationSeconds ?? 0);
       } else if (content.type === 'READING') {
         await completeContent(rohanSecond.attempt.id, learners[0]!.id, content.id, 'READING', 0);
       }
