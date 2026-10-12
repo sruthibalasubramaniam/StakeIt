@@ -12,7 +12,17 @@
 #   docker compose down
 #
 # Build context is the repository root because this is an npm workspaces monorepo.
+#
+# The explicit project name matters. Docker Compose defaults the project name to
+# the containing FOLDER, so this file and docker-compose.dev.yml used to resolve
+# to the same project ("stakeit"): their containers shared one namespace and one
+# bridge network. Bringing either stack down removed that shared network while
+# the other stack's containers still referenced its id, and the next start failed
+# with `failed to set up container networking: network <id> not found`. Separate
+# names give each stack its own network and container set.
 # =============================================================================
+
+name: stakeit-prod
 
 services:
   api:
@@ -36,11 +46,20 @@ services:
     networks:
       - stakeit
     healthcheck:
+      # `/api/health` reports the database reachability of the API: it answers
+      # 503 while the API is still trying to reach the database, and 200 once a
+      # connection has succeeded. So "healthy" here means "the API is listening
+      # AND the database is reachable" — which is exactly the condition under
+      # which a login can succeed.
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4000/api/health"]
-      interval: 20s
+      interval: 15s
       timeout: 5s
-      retries: 5
-      start_period: 40s
+      retries: 10
+      # A managed pooler (Supabase) can take a while to become routable from the
+      # container right after `docker compose up`. The API retries in the
+      # background and never exits, so a longer grace period avoids reporting a
+      # red container for a database that is simply still waking up.
+      start_period: 120s
 
   web:
     build:
@@ -57,6 +76,14 @@ services:
     image: stake-it-web:latest
     restart: unless-stopped
     depends_on:
+      # Deliberately `service_started` and NOT `service_healthy`.
+      #
+      # Waiting for the API to become healthy would mean the SPA is unreachable
+      # for as long as the database takes to become routable — the browser would
+      # get a connection error instead of an explanation. Starting nginx
+      # immediately is safe now that the API always has a live listener: nginx
+      # can proxy to it, and the API answers 503 with a clear message while the
+      # database is still starting, instead of nginx answering 502.
       api:
         condition: service_started
     ports:

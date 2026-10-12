@@ -331,13 +331,33 @@ needed.
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d --build
-docker compose -f docker-compose.dev.yml exec api npx --no-install prisma db push
+docker compose -f docker-compose.dev.yml exec api npm run db:push
 docker compose -f docker-compose.dev.yml exec api npm run db:seed
 ```
 
+`db:push` creates the schema in the fresh volume; `db:seed` fills it with the demo
+dataset. The seed resets first, so it is safe to re-run.
+
+Use the root `npm run db:push` / `npm run db:seed` scripts rather than calling
+`npx prisma` directly. The Prisma CLI is installed in `backend/node_modules/.bin`
+and is **not** on `PATH` at the repository root, so a bare `npx prisma db push`
+fails with `sh: prisma: not found`. The root scripts delegate to the backend
+workspace, which is where both the CLI and `prisma/schema.prisma` live.
+
 The dev compose overrides `DATABASE_URL`, `AUTH_PROVIDER=local` and `CORS_ORIGIN`,
-so it works with no external service. PostgreSQL is published on host port
-**5433** to avoid clashing with a native instance on 5432.
+so it works with no external service. It publishes **different host ports** from
+the production stack, so the two can run at the same time — useful when the
+managed database is unreachable:
+
+| Stack | Web | API | Database |
+| --- | --- | --- | --- |
+| `docker compose up` | <http://localhost:8080> | <http://127.0.0.1:4000> | Supabase (from `.env`) |
+| `docker-compose.dev.yml` | <http://localhost:8090> | <http://localhost:4100> | bundled PostgreSQL on **5433** |
+
+The dev stack reads `DEV_WEB_PORT` / `DEV_API_PORT`; `WEB_PORT` / `API_PORT` in
+`.env` belong to the production stack. Port **5433** avoids clashing with a native
+PostgreSQL on 5432, and each file declares its own Compose project name
+(`stakeit-prod` / `stakeit-dev`) so their containers and networks never interfere.
 
 ### Request path
 

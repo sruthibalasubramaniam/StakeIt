@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # =============================================================================
 # Stake It web client — build the SPA, then serve it with nginx.
 #
@@ -8,6 +7,11 @@
 #
 # Vite inlines VITE_* variables at BUILD time, so the API URL is a build arg here
 # and NOT a runtime environment variable. To change it you must rebuild the image.
+#
+# NOTE: deliberately NO `# syntax=docker/dockerfile:1` directive — see the
+# matching note in backend/Dockerfile. It forces a Docker Hub fetch of the
+# external frontend image before parsing begins, which is the first thing to fail
+# on a slow or filtered network, and this file needs no BuildKit-only syntax.
 # =============================================================================
 
 FROM node:20-alpine AS build

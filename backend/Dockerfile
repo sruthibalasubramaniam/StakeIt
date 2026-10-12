@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # =============================================================================
 # Stake It API — production image
 #
@@ -7,6 +6,16 @@
 #   docker compose build api
 #
 # Stages: deps (install) -> build (tsc) -> runtime (non-root, migrations on boot)
+#
+# NOTE: deliberately NO `# syntax=docker/dockerfile:1` directive.
+# That directive makes BuildKit fetch the external frontend image
+# `docker/dockerfile:1` from Docker Hub before it can even parse this file. On a
+# slow or filtered network that first step fails with
+#   "failed to fetch oauth token: ... An existing connection was forcibly closed"
+# and the build dies before running a single instruction. Nothing here uses
+# BuildKit-only syntax (no `RUN --mount`, heredocs, `COPY --link` or `--chmod`),
+# so the frontend bundled with the daemon parses this file verbatim and the
+# build needs no registry round-trip at all.
 # =============================================================================
 
 FROM node:20-alpine AS base

@@ -21,6 +21,7 @@
     "test:integration": "npm run test:integration --workspace backend",
     "typecheck": "npm run typecheck --workspace backend && npm run typecheck --workspace frontend",
     "db:generate": "npm run db:generate --workspace backend",
+    "db:push": "npm run db:push --workspace backend",
     "db:migrate": "npm run db:migrate --workspace backend",
     "db:deploy": "npm run db:deploy --workspace backend",
     "db:seed": "npm run db:seed --workspace backend",

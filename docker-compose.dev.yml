@@ -9,7 +9,31 @@
 #
 # The `environment` block below intentionally OVERRIDES the DATABASE_URL in .env
 # so the containers talk to the bundled postgres instead of Supabase.
+#
+# The explicit project name keeps this stack out of the production stack's
+# namespace. Both files used to default to the folder name ("stakeit"), which
+# meant they shared one bridge network — tearing down either stack deleted the
+# network the other one's containers were still attached to, producing
+# `failed to set up container networking: network <id> not found`.
+#
+# HOST PORTS are deliberately different from docker-compose.yml so the two stacks
+# can run AT THE SAME TIME (handy when the managed database is unreachable and you
+# want to demo against local Postgres):
+#
+#   production stack (:8080 / :4000)  →  Supabase
+#   this dev stack   (:8090 / :4100)  →  bundled Postgres on :5433
+#
+# Before this, both stacks published 8080 and 4000. Because their projects are now
+# separate, Compose no longer replaces one with the other, so the second stack to
+# start died with `Bind for 127.0.0.1:4000 failed: port is already allocated`.
+#
+# The dev stack reads DEV_WEB_PORT / DEV_API_PORT — NOT WEB_PORT / API_PORT. A
+# single shared .env holds WEB_PORT=8080 and API_PORT=4000 for the production
+# stack, and reusing those names here meant .env silently overrode the defaults
+# below and re-created the very collision this is meant to avoid.
 # =============================================================================
+
+name: stakeit-dev
 
 services:
   postgres:
@@ -48,10 +72,11 @@ services:
       # Local auth needs no external service.
       AUTH_PROVIDER: local
       JWT_SECRET: ${JWT_SECRET:-local_development_secret_change_me}
-      CORS_ORIGIN: http://localhost:${WEB_PORT:-8080},http://localhost:5173
+      CORS_ORIGIN: http://localhost:${DEV_WEB_PORT:-8090},http://localhost:5173
       LOG_LEVEL: debug
     ports:
-      - "${API_PORT:-4000}:4000"
+      # 4100 by default: the production stack owns 4000 (and so does `npm run dev`).
+      - "${DEV_API_PORT:-4100}:4000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,12 +102,17 @@ services:
       api:
         condition: service_started
     ports:
-      - "${WEB_PORT:-8080}:80"
+      # 8090 by default so this stack can run beside the production stack (:8080).
+      - "${DEV_WEB_PORT:-8090}:80"
     networks:
       - stakeit
 
 volumes:
   stakeit-pgdata:
+    # Pinned so the local database volume keeps a predictable name and survives
+    # any future change to the project name above. Without this it would be
+    # created as `<project>_stakeit-pgdata`.
+    name: stakeit-pgdata
 
 networks:
   stakeit:
