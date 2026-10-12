@@ -5,10 +5,12 @@ import compression from 'compression';
 import pinoHttp from 'pino-http';
 import { env, corsOrigins, isTest } from './config/env';
 import { logger } from './lib/logger';
+import { isDatabaseReady } from './lib/prisma';
 import { apiRouter } from './routes';
 import { requestContext } from './middleware/requestContext';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { apiLimiter } from './middleware/rateLimit';
+import { serviceUnavailable } from './lib/errors';
 
 /**
  * Builds the Express application.
@@ -77,6 +79,31 @@ export function createApp(): Express {
         description: 'Incentive-driven adaptive learning platform. Virtual points only — no real money.',
       },
     });
+  });
+
+  /*
+   * Readiness gate.
+   *
+   * The listener now starts before the database is reachable (see `server.ts`),
+   * so every data route has to be honest about the gap: until a connection has
+   * succeeded the API answers 503 SERVICE_UNAVAILABLE with the standard error
+   * envelope. The client can then say "the database is still starting" instead
+   * of surfacing a proxy-level 502 or a generic 500.
+   *
+   * `/health` is deliberately outside the gate — it is the endpoint that reports
+   * the database state, and the container healthcheck depends on it.
+   */
+  app.use(env.API_PREFIX, (req, _res, next) => {
+    if (req.originalUrl.startsWith(`${env.API_PREFIX}/health`) || isDatabaseReady()) {
+      next();
+      return;
+    }
+    next(
+      serviceUnavailable(
+        'The database is still starting up. Please retry in a few seconds.',
+        { reason: 'DATABASE_NOT_READY' },
+      ),
+    );
   });
 
   app.use(env.API_PREFIX, apiLimiter, apiRouter);

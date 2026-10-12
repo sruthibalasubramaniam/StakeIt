@@ -27,6 +27,19 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
 
+  /**
+   * Startup reconnection policy. A managed pooler (Supabase) or a
+   * `depends_on` PostgreSQL is often unreachable for the first minute or two
+   * after `docker compose up`; the API retries in the background instead of
+   * exiting, so nginx never sees a dead upstream (which it reports as 502).
+   *
+   * `0` attempts means "retry until it works" — the default, because giving up
+   * would strand the container in a permanently degraded state.
+   */
+  DB_CONNECT_MAX_ATTEMPTS: z.coerce.number().int().min(0).default(0),
+  DB_CONNECT_INITIAL_DELAY_MS: z.coerce.number().int().positive().default(1_000),
+  DB_CONNECT_MAX_DELAY_MS: z.coerce.number().int().positive().default(5_000),
+
   RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
