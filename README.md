@@ -94,7 +94,7 @@ is enforced.
 | Frontend | React 18, TypeScript, Vite, Tailwind CSS, React Router, Axios |
 | Backend | Node.js, Express 4, TypeScript, zod, Pino |
 | ORM / DB | Prisma, PostgreSQL |
-| Auth | JWT (HS256, local provider) + Supabase Auth adapter (GoTrue + JWKS verification) |
+| Auth | Local only: bcrypt password hashes + HS256 JWT issued by this API |
 | Jobs | node-cron, in-process scheduler |
 | Tests | Vitest, Supertest |
 | Containers | Docker, Docker Compose (Postgres + API + nginx-served SPA) |
@@ -199,11 +199,9 @@ Copy `.env.example` → `.env` (root, for compose) and
 |---|---|---|
 | `DATABASE_URL` | backend | PostgreSQL connection string (Supabase pooler works) |
 | `TEST_DATABASE_URL` | backend | optional, used by the integration suite |
-| `AUTH_PROVIDER` | backend | `local` or `supabase` |
-| `JWT_SECRET` | backend | ≥ 16 chars, required when `AUTH_PROVIDER=local` |
-| `SUPABASE_URL` / `SUPABASE_ANON_KEY` | backend | required when `AUTH_PROVIDER=supabase` |
+| `JWT_SECRET` | backend | signs every access token; ≥ 16 chars (≥ 32 in production) |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | backend | PostgreSQL + private storage; server-side only |
 | `SUPABASE_SERVICE_ROLE_KEY` | backend | **server only — never ship to the browser** |
-| `SUPABASE_JWT_SECRET` | backend | only if the project signs JWTs with a shared secret |
 | `CORS_ORIGIN` | backend | comma-separated allow-list |
 | `SIGNUP_WALLET_GRANT` | backend | welcome points (default 1500) |
 | `AT_RISK_THRESHOLD_PERCENT` | backend | pacing gap that flags AT_RISK (default 15) |
@@ -258,23 +256,16 @@ Web app: <http://localhost:5173>
 
 ## Supabase setup
 
-`AUTH_PROVIDER=local` is the default and needs no external service. To use Supabase Auth:
+Email and password authentication is local: bcrypt hashes in PostgreSQL and HS256 JWTs
+signed with `JWT_SECRET`. There is no external auth dependency.
 
-1. Create a Supabase project.
-2. **Database** → copy the pooled connection string into `DATABASE_URL`, and the direct
-   connection into a variable you use for migrations:
-   ```bash
-   DATABASE_URL="<direct-url>" npm run db:deploy
-   ```
-3. **Settings → API** → copy `Project URL` and `anon` key into `SUPABASE_URL` /
-   `SUPABASE_ANON_KEY`. Keep `service_role` on the server only.
-4. If the project signs JWTs with a shared secret (HS256), set `SUPABASE_JWT_SECRET`.
-   With asymmetric keys the API verifies against the project JWKS automatically.
-5. Set `AUTH_PROVIDER=supabase` and restart the API.
+Supabase was previously used as an optional auth provider. It was removed because the
+token verifier had already been dropped from the middleware — a Supabase-issued token
+could sign a user in but would then fail every authenticated request with `401`.
 
-Flow with Supabase enabled: credentials are created and verified by Supabase GoTrue; the API
-then maps the Supabase subject id to a local profile. Roles, stakes and all business rules
-stay in this database — Supabase never decides authorisation.
+Supabase is still used for two things: **PostgreSQL** (the pooled `DATABASE_URL`) and
+**private file storage** for reading PDFs (`SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`).
+Roles, stakes and all business rules live in this database.
 
 ### Connection shape: direct vs pooled (read this if connection attempts fail)
 
@@ -506,7 +497,7 @@ and is **not** on `PATH` at the repository root, so a bare `npx prisma db push`
 fails with `sh: prisma: not found`. The root scripts delegate to the backend
 workspace, which is where both the CLI and `prisma/schema.prisma` live.
 
-The dev compose overrides `DATABASE_URL`, `AUTH_PROVIDER=local` and `CORS_ORIGIN`,
+The dev compose overrides `DATABASE_URL` and `CORS_ORIGIN`,
 so it works with no external service. It publishes **different host ports** from
 the production stack, so the two can run at the same time — useful when the
 managed database is unreachable:
@@ -594,8 +585,8 @@ URL; see `backend/.env.example` and the `directUrl` note in
 | Frontend URL | The public origin users visit, e.g. `https://stake-it.example.com`. Terminate TLS at your ingress/load balancer. |
 | Backend URL | Either the same origin (`/api` proxied by nginx) or a dedicated host; if separate, set `VITE_API_URL` at build time. |
 | CORS | Set `CORS_ORIGIN` to the exact frontend origin(s). The API **refuses to boot** in production if it contains `*`. |
-| `JWT_SECRET` | Must not be the development placeholder and must be ≥ 32 characters; enforced at boot when `AUTH_PROVIDER=local`. |
-| Supabase keys | `SUPABASE_URL` plus `SUPABASE_ANON_KEY` or `SUPABASE_JWT_SECRET` are required when `AUTH_PROVIDER=supabase`. `SUPABASE_SERVICE_ROLE_KEY` stays server-side and is never sent to the browser. |
+| `JWT_SECRET` | Must not be the development placeholder and must be ≥ 32 characters; enforced at boot. |
+| Supabase keys | `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are used for PostgreSQL and private file storage. The service-role key stays server-side and is never sent to the browser. |
 | `TRUST_PROXY` | Set to the number of proxy hops in front of the API (1 behind nginx) so rate limiting sees real client IPs. |
 | Secrets | Live only in `.env` (gitignored) or your platform's secret store. Nothing secret is ever committed, logged, or bundled into the frontend. |
 | Logs | Pino JSON to stdout — collect with your platform's log driver. Tokens, cookies and database URLs are redacted. |

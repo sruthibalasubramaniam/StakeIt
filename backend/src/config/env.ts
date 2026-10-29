@@ -55,8 +55,6 @@ const envSchema = z.object({
    */
   TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
   TX_MAX_WAIT_MS: z.coerce.number().int().min(1_000).max(120_000).default(10_000),
-
-  AUTH_PROVIDER: z.enum(['local', 'supabase']).default('local'),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters').default(DEV_JWT_SECRET_PLACEHOLDER),
   JWT_EXPIRES_IN: z.string().default('7d'),
   PASSWORD_MIN_LENGTH: z.coerce.number().int().min(6).default(8),
@@ -64,8 +62,6 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().optional().default(''),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
-  SUPABASE_JWT_SECRET: z.string().optional().default(''),
-  SUPABASE_JWT_AUDIENCE: z.string().optional().default('authenticated'),
   SUPABASE_STORAGE_BUCKET: z.string().optional().default('course-assets'),
 
   /**
@@ -151,7 +147,7 @@ const envSchema = z.object({
   .superRefine((config, ctx) => {
     // --- Secrets that must never survive into production -------------------
     if (config.NODE_ENV === 'production') {
-      if (config.AUTH_PROVIDER === 'local') {
+      {
         if (config.JWT_SECRET === DEV_JWT_SECRET_PLACEHOLDER) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
@@ -179,24 +175,6 @@ const envSchema = z.object({
       }
     }
 
-    // --- Supabase Auth requires an endpoint and a way to verify tokens -----
-    if (config.AUTH_PROVIDER === 'supabase') {
-      if (!config.SUPABASE_URL) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['SUPABASE_URL'],
-          message: 'SUPABASE_URL is required when AUTH_PROVIDER=supabase.',
-        });
-      }
-      if (!config.SUPABASE_ANON_KEY && !config.SUPABASE_JWT_SECRET) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['SUPABASE_ANON_KEY'],
-          message:
-            'Set SUPABASE_ANON_KEY (to sign users in) or SUPABASE_JWT_SECRET (to verify tokens) when AUTH_PROVIDER=supabase.',
-        });
-      }
-    }
   });
 
 const parsed = envSchema.safeParse(process.env);
@@ -220,4 +198,3 @@ export const corsOrigins = env.CORS_ORIGIN.split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-export const supabaseConfigured = Boolean(env.SUPABASE_URL && (env.SUPABASE_ANON_KEY || env.SUPABASE_JWT_SECRET));

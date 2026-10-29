@@ -5,7 +5,7 @@ export interface AuthContext {
   email: string;
   role: Role;
   /** `local` = HS256 token issued by this API, `supabase` = Supabase access token. */
-  source: 'local' | 'supabase';
+  source: 'local';
 }
 
 declare global {

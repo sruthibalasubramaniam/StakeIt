@@ -2,7 +2,6 @@ import type { Role } from '@prisma/client';
 import { env } from '../config/env';
 import { prisma, withTransaction } from '../lib/prisma';
 import { conflict, forbidden, invalidCredentials, notFound } from '../lib/errors';
-import { SupabaseAuthClient } from '../lib/supabase';
 import { logger } from '../lib/logger';
 import { WalletService } from './walletService';
 import { NotificationService } from './notificationService';
@@ -55,10 +54,9 @@ export const AuthService = {
   /**
    * Creates a Stake It profile.
    *
-   * With `AUTH_PROVIDER=supabase` the credential is first created in Supabase
-   * Auth; the local profile row then stores the Supabase subject id. With the
-   * default `local` provider the password is hashed with bcrypt and this API
-   * issues the session token itself.
+   * The password is hashed with bcrypt and this API issues the session token
+   * itself. Supabase Auth is no longer used: its verifier had already been
+   * removed from the middleware, so a Supabase token could never authenticate.
    */
   async register(input: RegisterInput): Promise<AuthResult> {
     const email = normalizeEmail(input.email);
@@ -67,33 +65,19 @@ export const AuthService = {
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) throw conflict('An account with this email already exists.', 'CONFLICT', { field: 'email' });
 
-    let supabaseId: string | null = null;
-    let providerSession: { accessToken: string; refreshToken?: string; expiresIn?: number } | null = null;
-    let passwordHash: string | null = null;
-
-    if (env.AUTH_PROVIDER === 'supabase') {
-      const session = await SupabaseAuthClient.signUpWithPassword({
-        email,
-        password: input.password,
-        metadata: { fullName: input.fullName, role },
-      });
-      supabaseId = session.userId;
-      providerSession = {
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        expiresIn: session.expiresIn,
-      };
-    } else {
-      assertPasswordStrength(input.password);
-      passwordHash = await hashPassword(input.password);
-    }
+    /*
+     * Local credentials only. Supabase Auth was removed: its token verifier had
+     * already been dropped from the middleware, so a Supabase-issued token could
+     * sign in but never authenticate a request.
+     */
+    assertPasswordStrength(input.password);
+    const passwordHash = await hashPassword(input.password);
 
     try {
       const created = await withTransaction(async (tx) => {
         const user = await tx.user.create({
           data: {
             email,
-            supabaseId,
             passwordHash,
             role,
             fullName: input.fullName.trim(),
@@ -129,16 +113,6 @@ export const AuthService = {
       });
 
       const profile = await loadProfile(created.user.id);
-
-      if (providerSession) {
-        return {
-          user: profile,
-          accessToken: providerSession.accessToken,
-          refreshToken: providerSession.refreshToken,
-          expiresIn: String(providerSession.expiresIn ?? 3600),
-        };
-      }
-
       const { accessToken, expiresIn } = signAccessToken({
         userId: created.user.id,
         email: created.user.email,
@@ -147,37 +121,12 @@ export const AuthService = {
 
       return { user: profile, accessToken, expiresIn };
     } catch (error) {
-      // Best-effort compensation: never leave an orphaned Supabase credential
-      // when the local profile could not be created.
-      if (supabaseId) {
-        logger.error({ err: error, supabaseId }, 'Rolling back orphaned Supabase user after profile failure');
-      }
       throw error;
     }
   },
 
   async login(params: { email: string; password: string }): Promise<AuthResult> {
     const email = normalizeEmail(params.email);
-
-    if (env.AUTH_PROVIDER === 'supabase') {
-      const session = await SupabaseAuthClient.signInWithPassword({ email, password: params.password });
-      const user = await prisma.user.findFirst({ where: { supabaseId: session.userId } });
-      if (!user) {
-        throw invalidCredentials(
-          'No Stake It profile is linked to this account. Register on Stake It first.',
-        );
-      }
-      if (!user.isActive) throw forbidden('This account has been deactivated. Contact an administrator.');
-
-      await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-
-      return {
-        user: await loadProfile(user.id),
-        accessToken: session.accessToken,
-        refreshToken: session.refreshToken,
-        expiresIn: String(session.expiresIn ?? 3600),
-      };
-    }
 
     const user = await prisma.user.findUnique({ where: { email } });
     // Identical error for unknown email and wrong password (no user enumeration).
@@ -198,10 +147,7 @@ export const AuthService = {
     return { user: await loadProfile(user.id), accessToken, expiresIn };
   },
 
-  async logout(accessToken: string | null): Promise<void> {
-    if (env.AUTH_PROVIDER === 'supabase' && accessToken) {
-      await SupabaseAuthClient.signOut(accessToken);
-    }
+  async logout(_accessToken: string | null): Promise<void> {
     // Local tokens are stateless JWTs; the client discards them.
   },
 
@@ -240,9 +186,6 @@ export const AuthService = {
   },
 
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
-    if (env.AUTH_PROVIDER === 'supabase') {
-      throw forbidden('Password changes are managed by Supabase for this deployment.');
-    }
     assertPasswordStrength(newPassword);
 
     const user = await prisma.user.findUnique({ where: { id: userId } });

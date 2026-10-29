@@ -26,7 +26,7 @@ async function main(): Promise<void> {
       {
         port: env.PORT,
         env: env.NODE_ENV,
-        authProvider: env.AUTH_PROVIDER,
+        auth: 'local-jwt',
         apiPrefix: env.API_PREFIX,
       },
       `Stake It API listening on http://localhost:${env.PORT}${env.API_PREFIX}`,
