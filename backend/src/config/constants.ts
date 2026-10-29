@@ -25,6 +25,43 @@ export const MAX_PLAYBACK_RATE = 2.5;
 export const READING_COMPLETION_THRESHOLD = 0.95;
 
 /* -------------------------------------------------------------------------- */
+/* Structured reading lessons (MOOC reader)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Reading-lesson limits. They exist so a single lesson cannot become an
+ * unbounded request/response payload or a denial-of-service vector, and they
+ * document the authoring envelope the UI is built against.
+ */
+export const READING_LIMITS = {
+  /** Sections per lesson. */
+  maxSections: 60,
+  /** Checkpoint questions per section. */
+  maxQuestionsPerCheckpoint: 10,
+  /** Options per checkpoint question. */
+  maxOptionsPerQuestion: 8,
+  /** Attached resources (PDFs + links) per lesson. */
+  maxResources: 20,
+  /** Rich-text body length per section (characters of HTML). */
+  maxSectionChars: 60_000,
+  /** Reading speed used for estimates when the instructor gives none. */
+  wordsPerMinute: 200,
+} as const;
+
+/**
+ * Bounds for optional AI helpers.
+ *
+ * `maxSourceChars` caps what is sent to a provider per request — long sections
+ * are truncated with an explicit note rather than silently costing more.
+ */
+export const AI_LIMITS = {
+  minSourceChars: 200,
+  maxSourceChars: 14_000,
+  maxQuestions: 5,
+  minQuestions: 1,
+} as const;
+
+/* -------------------------------------------------------------------------- */
 /* Instructor reputation                                                       */
 /* -------------------------------------------------------------------------- */
 

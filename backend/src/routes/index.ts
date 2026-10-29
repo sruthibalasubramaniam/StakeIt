@@ -9,6 +9,8 @@ import {
   quizAdminRouter,
 } from './course.routes';
 import { attemptRouter, contentAliasRouter, moduleAliasRouter, submissionReviewRouter } from './learning.routes';
+import { readingAuthoringRouter } from './reading.routes';
+import { certificateRouter } from './certificate.routes';
 import { enrollmentRouter } from './enrollment.routes';
 import { rewardRouter, stakeRouter, walletRouter } from './wallet.routes';
 import { dashboardRouter, instructorRouter, myCoursesRouter } from './analytics.routes';
@@ -44,8 +46,12 @@ apiRouter.use('/health', healthRouter);
 apiRouter.use('/auth', authRouter);
 
 apiRouter.use('/courses', courseRouter);
+apiRouter.use('/certificates', certificateRouter);
 apiRouter.use('/modules', moduleRouter);
 apiRouter.use('/modules', moduleAliasRouter);
+// Structured reading-lesson authoring (`/content/:id/reading/...`) is mounted
+// before the generic content router so its nested paths resolve first.
+apiRouter.use('/content', readingAuthoringRouter);
 apiRouter.use('/content', contentRouter);
 apiRouter.use('/content', contentAliasRouter);
 apiRouter.use('/quizzes', quizAdminRouter);

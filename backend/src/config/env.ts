@@ -44,6 +44,18 @@ const envSchema = z.object({
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(20),
 
+  /**
+   * Interactive-transaction budget for `withTransaction`.
+   *
+   * Settlement (wallet credits + ledger + stakes + enrolment in one atomic unit)
+   * is the longest transaction in the system. The 15 s default is comfortable on
+   * a local database, but a remote pooler can need 5–20 s per statement under
+   * load, which surfaces as `P2028: transaction already closed`. Raise this for
+   * remote/high-latency databases rather than loosening the transaction itself.
+   */
+  TX_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(300_000).default(15_000),
+  TX_MAX_WAIT_MS: z.coerce.number().int().min(1_000).max(120_000).default(10_000),
+
   AUTH_PROVIDER: z.enum(['local', 'supabase']).default('local'),
   JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters').default(DEV_JWT_SECRET_PLACEHOLDER),
   JWT_EXPIRES_IN: z.string().default('7d'),
@@ -55,6 +67,71 @@ const envSchema = z.object({
   SUPABASE_JWT_SECRET: z.string().optional().default(''),
   SUPABASE_JWT_AUDIENCE: z.string().optional().default('authenticated'),
   SUPABASE_STORAGE_BUCKET: z.string().optional().default('course-assets'),
+
+  /**
+   * Reading-lesson storage.
+   *
+   * `READING_PDF_MAX_MB` caps the raw upload accepted by
+   * `POST /api/content/:id/reading/resources/upload`; the Express raw-body
+   * limit is derived from it so the two can never disagree.
+   * `READING_SIGNED_URL_TTL_SECONDS` is the lifetime of the signed Supabase
+   * Storage URL handed to a learner or instructor for a private PDF.
+   */
+  READING_PDF_MAX_MB: z.coerce.number().int().min(1).max(50).default(10),
+  READING_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(900),
+
+  /**
+   * Optional AI provider.
+   *
+   * Deliberately optional: with `AI_API_KEY` unset every AI endpoint answers
+   * `503 AI_UNAVAILABLE` and the rest of the product is unaffected. All three
+   * supported providers expose an OpenAI-compatible chat-completions route, so a
+   * single client covers them and `AI_BASE_URL` is the only difference.
+   */
+  AI_PROVIDER: z.enum(['openai', 'gemini', 'anthropic', 'compatible']).optional(),
+  AI_API_KEY: z.string().optional(),
+  AI_BASE_URL: z.string().url().optional(),
+  AI_MODEL: z.string().optional(),
+  AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64).max(8_000).default(3_000),
+  AI_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(120_000).default(30_000),
+
+  /**
+   * Transactional email (Resend). Off unless explicitly enabled *and* a key and
+   * from-address are present, so a half-configured environment never sends.
+   *
+   * `EMAIL_FROM` must be an address on a domain verified in Resend — a
+   * `resend.dev` sender can only deliver to your own account address.
+   */
+  EMAIL_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => value === 'true'),
+
+  /**
+   * `resend` needs a verified domain. `smtp` sends through a real mailbox, which
+   * is the only way to send *from* an address on a domain you do not control
+   * (e.g. a Gmail account) — the mailbox itself authenticates the sender.
+   */
+  EMAIL_PROVIDER: z.enum(['resend', 'smtp']).optional().default('resend'),
+  SMTP_HOST: z.string().optional().default('smtp.gmail.com'),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(465),
+  SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined ? true : value === 'true')),
+  SMTP_USER: z.string().optional(),
+  /** Gmail requires an App Password here, not the account password. */
+  SMTP_PASS: z.string().optional(),
+
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().optional(),
+  EMAIL_REPLY_TO: z.string().optional(),
+  EMAIL_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
+  /** Public origin used in email links. */
+  APP_URL: z.string().optional().default('http://localhost:5173'),
+
+  /** Name printed on certificates as the issuing body. */
+  CERTIFICATE_ISSUER: z.string().optional().default('Stake It Academy'),
 
   SIGNUP_WALLET_GRANT: z.coerce.number().int().min(0).default(1500),
   DEADLINE_JOB_BATCH_SIZE: z.coerce.number().int().positive().default(200),

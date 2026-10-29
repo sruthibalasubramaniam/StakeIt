@@ -46,7 +46,17 @@ export function createApp(): Express {
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'x-request-id'],
+      // `x-file-name` / `x-resource-title` carry the display name of a raw PDF
+      // upload (see `routes/reading.routes.ts`).
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'x-request-id',
+        'x-file-name',
+        'x-resource-title',
+        // Import: skip the AI drafting pass.
+        'x-ai-checkpoints',
+      ],
       exposedHeaders: ['x-request-id'],
       maxAge: 86_400,
     }),

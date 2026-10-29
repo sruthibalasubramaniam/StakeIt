@@ -6,6 +6,7 @@ import { Button, Chip, Divider, MaterialIcon, ProgressBar } from '../../componen
 import { Alert, Card, CardHeader, ErrorBlock, LoadingBlock } from '../../components/ui/data';
 import { Input } from '../../components/ui/forms';
 import { VideoPlayer } from '../../components/domain/VideoPlayer';
+import { ReadingLessonReader } from '../../components/domain/ReadingLessonReader';
 import { useToast } from '../../context/ToastContext';
 import { errorMessage } from '../../services/api';
 import { formatPercent } from '../../utils/format';
@@ -61,7 +62,7 @@ export function ContentPage() {
       suspicious: false,
       notice: undefined,
     });
-    if (payload.payload.kind === 'READING') {
+    if (payload.payload.kind === 'READING' && payload.payload.structured === false) {
       setComprehensionResult(
         payload.content.progress.comprehensionPassed === null
           ? null
@@ -228,7 +229,20 @@ export function ContentPage() {
         />
       ) : null}
 
-      {payload.kind === 'READING' ? (
+      {/* MOOC reader: sections, checkpoints, PDFs, resume */}
+      {payload.kind === 'READING' && payload.structured ? (
+        <ReadingLessonReader
+          attemptId={attemptId}
+          contentId={contentId}
+          payload={payload}
+          isContentCompleted={data.content.isCompleted}
+          onRefresh={() => content.refetch()}
+          onComplete={() => void complete()}
+          completing={completing}
+        />
+      ) : null}
+
+      {payload.kind === 'READING' && !payload.structured ? (
         <div className="flex flex-col gap-space-md">
           <div
             ref={readingRef}

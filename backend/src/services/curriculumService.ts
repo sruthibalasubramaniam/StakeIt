@@ -81,6 +81,8 @@ export const CurriculumService = {
             assessment: {
               select: { id: true, title: true, passingScore: true, maxAttempts: true, type: true, _count: { select: { questions: true } } },
             },
+            // Reading-lesson authoring status shown in the course builder.
+            _count: { select: { readingSections: true, readingResources: true } },
           },
         },
       },
@@ -205,7 +207,12 @@ export const CurriculumService = {
 
     if (!input.title?.trim()) throw badRequest('Content title is required.');
     if (input.type === 'VIDEO' && !input.videoUrl) throw badRequest('Video content requires a video URL.');
-    if (input.type === 'READING' && !input.readingBody) throw badRequest('Reading content requires a body.');
+    /*
+     * A reading lesson may be created empty: it is authored as sections in the
+     * lesson editor and only becomes publishable once it has content (enforced
+     * by `ReadingService.validateLesson` and the course publish gate). Passing a
+     * `readingBody` still works — that is the legacy single-body reading.
+     */
     if (input.type === 'READING' && input.requiresComprehensionCheck && !input.comprehensionAnswer) {
       throw badRequest('A comprehension check requires a reference answer.');
     }

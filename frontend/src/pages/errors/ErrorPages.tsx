@@ -76,6 +76,19 @@ export function NotFoundPage() {
  * Router error element. Distinguishes a thrown `Response` (404 on a data route)
  * from a genuine render failure so the message stays accurate.
  */
+/**
+ * Catch-all route for the **declarative** router.
+ *
+ * `RouteErrorPage` calls `useRouteError()`, which only exists inside a data
+ * router. Mounting it on `path="*"` under `BrowserRouter` threw
+ * "useRouteError must be used within a data router" and the error boundary then
+ * showed that message instead of a 404 — for any unknown URL, including an API
+ * path that Vite's SPA fallback hands to the client.
+ */
+export function NotFoundRoutePage() {
+  return <NotFoundPage />;
+}
+
 export function RouteErrorPage() {
   const error = useRouteError();
   const navigate = useNavigate();

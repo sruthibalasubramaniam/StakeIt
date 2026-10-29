@@ -93,6 +93,18 @@ export async function unwrap<T>(promise: Promise<{ data: { data: T } }>): Promis
 }
 
 export const http = {
+  /** Raw body upload: avoids multipart parsing on the server. */
+  upload: async <T>(url: string, body: Blob, headers: Record<string, string>): Promise<T> => {
+    const response = await apiClient.post(url, body, { headers });
+    return (response.data as { data: T }).data;
+  },
+
+  /** Raw binary download (certificates). Returns the blob, not the envelope. */
+  blob: async (url: string): Promise<Blob> => {
+    const response = await apiClient.get(url, { responseType: 'blob' });
+    return response.data as Blob;
+  },
+
   get: <T>(url: string, config?: AxiosRequestConfig) => unwrap<T>(apiClient.get(url, config)),
   post: <T>(url: string, body?: unknown, config?: AxiosRequestConfig) => unwrap<T>(apiClient.post(url, body ?? {}, config)),
   put: <T>(url: string, body?: unknown, config?: AxiosRequestConfig) => unwrap<T>(apiClient.put(url, body ?? {}, config)),

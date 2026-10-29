@@ -204,6 +204,13 @@ export interface ContentView {
     usesComprehensionCheck: boolean;
     activeSeconds: number;
     completedAt: string | null;
+    /** Structured-reading counters (`null` for every other content type). */
+    reading: {
+      structured: boolean;
+      totalSections: number;
+      completedSections: number;
+      percent: number;
+    } | null;
   };
   quiz: {
     id: string;
@@ -346,6 +353,128 @@ export interface LearningEntry {
   redirectToCompletion: boolean;
 }
 
+/* -------------------------------------------------------------------------- */
+/* Structured reading lessons (MOOC reader)                                    */
+/* -------------------------------------------------------------------------- */
+
+export interface ReadingCheckpointQuestionView {
+  id: string;
+  type: 'SINGLE_CHOICE' | 'MULTI_CHOICE' | 'TRUE_FALSE';
+  prompt: string;
+  points: number;
+  orderIndex: number;
+  /** Only sent once the checkpoint has been passed. */
+  explanation: string | null;
+  options: Array<{ id: string; label: string; orderIndex: number; isCorrect?: boolean }>;
+}
+
+export interface ReadingCheckpointView {
+  id: string;
+  title: string;
+  prompt: string | null;
+  passingScore: number;
+  maxAttempts: number | null;
+  attemptsUsed: number;
+  passed: boolean | null;
+  questions: ReadingCheckpointQuestionView[];
+}
+
+export interface ReadingSectionView {
+  id: string;
+  title: string;
+  orderIndex: number;
+  estimatedMinutes: number;
+  wordCount: number;
+  /** `null` while the section is still locked. */
+  bodyHtml: string | null;
+  isUnlocked: boolean;
+  isCompleted: boolean;
+  lockReason: string | null;
+  checkpoint: ReadingCheckpointView | null;
+}
+
+export interface ReadingResourceView {
+  id: string;
+  kind: 'PDF' | 'EXTERNAL_LINK' | 'EMBED';
+  title: string;
+  url: string | null;
+  available: boolean;
+  fileName: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  isDownloadable: boolean;
+}
+
+export interface ReadingReference {
+  label: string;
+  url: string;
+  note: string | null;
+}
+
+/** Structured reading payload — sections, checkpoints and attached material. */
+export interface ReadingLessonPayload {
+  kind: 'READING';
+  structured: true;
+  body: null;
+  requiresComprehensionCheck: false;
+  comprehensionPrompt: null;
+  completionThreshold: number;
+  lesson: {
+    objectives: string[];
+    references: ReadingReference[];
+    estimatedMinutes: number;
+    version: number;
+  };
+  sections: ReadingSectionView[];
+  resources: ReadingResourceView[];
+  resume: { sectionId: string | null; sectionIndex: number; pdfPage: number | null };
+  sectionProgress: { completed: number; total: number; percent: number };
+  completion: { complete: boolean; pendingSections: string[]; pendingCheckpoints: boolean };
+  storageConfigured: boolean;
+  /** True when the server has an AI provider configured. */
+  aiConfigured: boolean;
+}
+
+/** Result of importing a document into a lesson. */
+export interface ReadingImportResult {
+  mode: 'SECTIONS' | 'ATTACHMENT_ONLY';
+  sectionsCreated: number;
+  checkpointsCreated: number;
+  resourceId: string | null;
+  message: string;
+  sections: Array<{ id: string; title: string; wordCount: number }>;
+}
+
+/** AI-drafted checkpoint questions — returned for review, never auto-saved. */
+export interface AiDraftedQuestions {
+  sectionId: string;
+  sectionTitle: string;
+  source: 'AI_DRAFT';
+  questions: Array<{
+    prompt: string;
+    explanation: string;
+    options: Array<{ label: string; isCorrect: boolean }>;
+  }>;
+}
+
+/** AI summary of the section a learner is on. */
+export interface ReadingSectionSummary {
+  sectionId: string;
+  summary: string;
+  keyPoints: string[];
+  source: 'AI';
+}
+
+/** Reading written before the reader existed: one plain body of text. */
+export interface LegacyReadingPayload {
+  kind: 'READING';
+  structured: false;
+  body: string | null;
+  requiresComprehensionCheck: boolean;
+  comprehensionPrompt: string | null;
+  completionThreshold: number;
+}
+
 export interface ContentPayload {
   content: ContentView;
   module: { id: string; title: string; orderIndex: number; position: number; total: number };
@@ -360,16 +489,130 @@ export interface ContentPayload {
   nextContent: LearningState['nextContent'];
   payload:
     | { kind: 'VIDEO'; videoUrl: string | null; durationSeconds: number; requiredWatchPercent: number }
-    | {
-        kind: 'READING';
-        body: string | null;
-        requiresComprehensionCheck: boolean;
-        comprehensionPrompt: string | null;
-        completionThreshold: number;
-      }
+    | ReadingLessonPayload
+    | LegacyReadingPayload
     | { kind: 'QUIZ'; quizId: string; passingScore: number }
     | { kind: 'MODULE_ASSESSMENT'; assessmentId: string; passingScore: number }
     | { kind: 'UNSUPPORTED' };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reading authoring                                                           */
+/* -------------------------------------------------------------------------- */
+
+export interface ReadingCheckpointAuthoring {
+  id: string;
+  title: string;
+  prompt: string | null;
+  passingScore: number;
+  maxAttempts: number | null;
+  questions: Array<{
+    id: string;
+    type: 'SINGLE_CHOICE' | 'MULTI_CHOICE' | 'TRUE_FALSE';
+    prompt: string;
+    explanation: string | null;
+    points: number;
+    orderIndex: number;
+    options: Array<{ id: string; label: string; isCorrect: boolean; orderIndex: number }>;
+  }>;
+}
+
+export interface ReadingSectionAuthoring {
+  id: string;
+  title: string;
+  bodyHtml: string;
+  orderIndex: number;
+  estimatedMinutes: number | null;
+  wordCount: number;
+  checkpoint: ReadingCheckpointAuthoring | null;
+}
+
+export interface ReadingLessonAuthoring {
+  content: {
+    id: string;
+    moduleId: string;
+    title: string;
+    description: string | null;
+    type: ContentType;
+    isRequired: boolean;
+    estimatedMinutes: number | null;
+    objectives: string[];
+    references: ReadingReference[];
+    readingBody: string | null;
+    requiresComprehensionCheck: boolean;
+    comprehensionPrompt: string | null;
+    published: boolean;
+    publishedAt: string | null;
+    version: number;
+    structured: boolean;
+  };
+  sections: ReadingSectionAuthoring[];
+  resources: Array<{
+    id: string;
+    kind: 'PDF' | 'EXTERNAL_LINK' | 'EMBED';
+    title: string;
+    url: string | null;
+    fileName: string | null;
+    mimeType: string | null;
+    sizeBytes: number | null;
+    orderIndex: number;
+    isDownloadable: boolean;
+  }>;
+  estimatedReadingMinutes: number;
+  storageConfigured: boolean;
+  /** True when the server has an AI provider configured. */
+  aiConfigured: boolean;
+  limits: {
+    maxSections: number;
+    maxQuestionsPerCheckpoint: number;
+    maxOptionsPerQuestion: number;
+    maxResources: number;
+    maxSectionChars: number;
+    wordsPerMinute: number;
+  };
+}
+
+export interface ReadingPreviewPayload extends ReadingLessonPayload {
+  preview: true;
+  publishIssues: string[];
+}
+
+export interface ReadingSectionMutationResult {
+  sectionId: string;
+  isCompleted: boolean;
+  alreadyCompleted?: boolean;
+  nextSectionId: string | null;
+  nextSectionTitle: string | null;
+  nextSectionLocked: boolean;
+  lesson: {
+    structured: boolean;
+    complete: boolean;
+    completedSections: number;
+    totalSections: number;
+    percent: number;
+    pendingSections: string[];
+    canCompleteLesson: boolean;
+  };
+}
+
+export interface ReadingCheckpointResult {
+  passed: boolean;
+  alreadyPassed: boolean;
+  percentage: number;
+  score: number;
+  maxScore: number;
+  correctCount?: number;
+  totalQuestions?: number;
+  passingScore?: number;
+  attemptsUsed: number;
+  attemptsRemaining: number | null;
+  results: Array<{ questionId: string; correct: boolean; correctOptionIds: string[] }>;
+  explanations?: Array<{ questionId: string; explanation: string | null }>;
+  sectionId?: string;
+  sectionCompleted?: boolean;
+  nextSectionId?: string | null;
+  nextSectionTitle?: string | null;
+  lesson?: ReadingSectionMutationResult['lesson'];
 }
 
 export interface QuizQuestion {
@@ -941,6 +1184,10 @@ export interface ModuleAuthoring {
     readingBody?: string | null;
     requiresComprehensionCheck?: boolean;
     comprehensionPrompt?: string | null;
+    /** Structured reading authoring status. */
+    readingPublishedAt?: string | null;
+    readingVersion?: number;
+    _count?: { readingSections: number; readingResources: number };
     quiz: { id: string; passingScore: number; maxAttempts: number | null; _count: { questions: number } } | null;
     assessment: {
       id: string;
@@ -974,4 +1221,33 @@ export interface InstructorProfilePublic {
   };
   badges: Array<{ id: string; tier: BadgeTier; awardedAt: string; isActive: boolean; notes: string | null }>;
   courses: CourseSummary[];
+}
+
+/* -------------------------------------------------------------------------- */
+/* Certificates                                                                */
+/* -------------------------------------------------------------------------- */
+
+export interface CertificateView {
+  code: string;
+  learnerName: string;
+  courseTitle: string;
+  issuer: string;
+  completionDate: string;
+  issuedAt: string;
+  revokedAt: string | null;
+  revokedReason: string | null;
+  verifyUrl: string;
+}
+
+export interface CertificateVerification {
+  valid: boolean;
+  code: string;
+  learnerName?: string;
+  courseTitle?: string;
+  issuer?: string;
+  completionDate?: string;
+  issuedAt?: string;
+  revoked?: boolean;
+  revokedAt?: string | null;
+  revokedReason?: string | null;
 }

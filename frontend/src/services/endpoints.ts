@@ -9,6 +9,15 @@ import { http } from './api';
 import type {
   AdminDashboard,
   AssessmentPayload,
+  AiDraftedQuestions,
+  CertificateVerification,
+  CertificateView,
+  ReadingCheckpointResult,
+  ReadingImportResult,
+  ReadingSectionSummary,
+  ReadingLessonAuthoring,
+  ReadingPreviewPayload,
+  ReadingSectionMutationResult,
   AuthenticatedUser,
   AuthResult,
   CommitmentOption,
@@ -193,6 +202,136 @@ export const curriculumApi = {
 };
 
 /* -------------------------------------------------------------------------- */
+/* Structured reading lessons                                                  */
+/* -------------------------------------------------------------------------- */
+
+export const readingApi = {
+  /** Full draft: sections, checkpoints with answer keys, resources. */
+  view: (contentId: string) => http.get<ReadingLessonAuthoring>(`/content/${contentId}/reading`),
+
+  updateLesson: (
+    contentId: string,
+    body: {
+      description?: string | null;
+      estimatedMinutes?: number | null;
+      objectives?: string[];
+      references?: Array<{ label: string; url: string; note?: string | null }>;
+    },
+  ) => http.put<Record<string, unknown>>(`/content/${contentId}/reading`, body),
+
+  createSection: (contentId: string, body: { title: string; bodyHtml?: string; estimatedMinutes?: number | null }) =>
+    http.post<Record<string, unknown>>(`/content/${contentId}/reading/sections`, body),
+
+  updateSection: (
+    contentId: string,
+    sectionId: string,
+    body: { title?: string; bodyHtml?: string; estimatedMinutes?: number | null },
+  ) => http.put<Record<string, unknown>>(`/content/${contentId}/reading/sections/${sectionId}`, body),
+
+  deleteSection: (contentId: string, sectionId: string) =>
+    http.delete<{ id: string; deleted: boolean }>(`/content/${contentId}/reading/sections/${sectionId}`),
+
+  reorderSections: (contentId: string, orderedIds: string[]) =>
+    http.patch<Record<string, unknown>>(`/content/${contentId}/reading/sections/reorder`, { orderedIds }),
+
+  saveCheckpoint: (
+    contentId: string,
+    sectionId: string,
+    body: {
+      title?: string;
+      prompt?: string | null;
+      passingScore?: number;
+      maxAttempts?: number | null;
+      questions: Array<{
+        type?: 'SINGLE_CHOICE' | 'MULTI_CHOICE' | 'TRUE_FALSE';
+        prompt: string;
+        explanation?: string | null;
+        points?: number;
+        options: Array<{ label: string; isCorrect?: boolean }>;
+      }>;
+    },
+  ) => http.put<Record<string, unknown>>(`/content/${contentId}/reading/sections/${sectionId}/checkpoint`, body),
+
+  deleteCheckpoint: (contentId: string, sectionId: string) =>
+    http.delete<{ id: string; deleted: boolean }>(`/content/${contentId}/reading/sections/${sectionId}/checkpoint`),
+
+  publish: (contentId: string) =>
+    http.post<{ published: boolean; publishedAt: string | null }>(`/content/${contentId}/reading/publish`),
+
+  unpublish: (contentId: string) =>
+    http.post<{ published: boolean }>(`/content/${contentId}/reading/unpublish`),
+
+  preview: (contentId: string) => http.get<ReadingPreviewPayload>(`/content/${contentId}/reading/preview`),
+
+  addResource: (
+    contentId: string,
+    body: { kind: 'EXTERNAL_LINK' | 'EMBED'; title: string; url: string; isDownloadable?: boolean },
+  ) => http.post<Record<string, unknown>>(`/content/${contentId}/reading/resources`, body),
+
+  /**
+   * Raw PDF upload. The file is sent as the request body (not multipart), with
+   * the display name in a header — the API caps the size and verifies the magic
+   * bytes before storing it privately.
+   */
+  uploadPdf: (contentId: string, file: File, title?: string) =>
+    http.post<Record<string, unknown>>(`/content/${contentId}/reading/resources/upload`, file, {
+      headers: {
+        'Content-Type': 'application/pdf',
+        'x-file-name': encodeURIComponent(file.name),
+        ...(title ? { 'x-resource-title': encodeURIComponent(title) } : {}),
+      },
+      timeout: 120_000,
+    }),
+
+  deleteResource: (contentId: string, resourceId: string) =>
+    http.delete<{ id: string; deleted: boolean }>(`/content/${contentId}/reading/resources/${resourceId}`),
+
+  /**
+   * Import a document into draft sections. The file is sent as a raw body with
+   * its name in a header (no multipart parser on the server).
+   */
+  importDocument: (contentId: string, file: File, withAiCheckpoints = true) =>
+    http.upload<ReadingImportResult>(`/content/${contentId}/reading/import`, file, {
+      'Content-Type': file.type || 'application/octet-stream',
+      'x-file-name': file.name,
+      'x-ai-checkpoints': String(withAiCheckpoints),
+    }),
+
+  /** Optional: draft checkpoint questions from a section with the AI provider. */
+  draftQuestions: (contentId: string, sectionId: string, count = 2) =>
+    http.post<AiDraftedQuestions>(
+      `/content/${contentId}/reading/sections/${sectionId}/questions/draft`,
+      { count },
+    ),
+
+  resourceUrl: (contentId: string, resourceId: string) =>
+    http.get<{ id: string; url: string | null; available: boolean }>(
+      `/content/${contentId}/reading/resources/${resourceId}/url`,
+    ),
+};
+
+/* -------------------------------------------------------------------------- */
+/* Certificates                                                                */
+/* -------------------------------------------------------------------------- */
+
+export const certificateApi = {
+  mine: () => http.get<CertificateView[]>('/certificates/mine'),
+
+  forAttempt: (attemptId: string) =>
+    http.get<{ certificate: CertificateView | null }>(`/attempts/${attemptId}/certificate`),
+
+  /** Issues (or returns) the certificate for a completed attempt. */
+  issue: (attemptId: string) =>
+    http.post<{ certificate: CertificateView }>(`/attempts/${attemptId}/certificate`),
+
+  /** Downloads the PDF and hands back a blob for the browser to save. */
+  download: (attemptId: string) => http.blob(`/attempts/${attemptId}/certificate/file`),
+
+  verify: (code: string) =>
+    http.get<CertificateVerification>(`/certificates/verify/${encodeURIComponent(code)}`),
+};
+
+/* -------------------------------------------------------------------------- */
 /* Enrolment & learning                                                        */
 /* -------------------------------------------------------------------------- */
 
@@ -239,12 +378,59 @@ export const learningApi = {
       readingReachedEnd?: boolean;
       requiresComprehensionCheck?: boolean;
       comprehensionPassed?: boolean | null;
+      structured?: boolean;
     }>(`/attempts/${attemptId}/content/${contentId}/progress`, body),
 
   submitComprehension: (attemptId: string, contentId: string, answer: string) =>
     http.post<{ passed: boolean; comprehensionPassed: boolean | null; feedback: string }>(
       `/attempts/${attemptId}/content/${contentId}/comprehension`,
       { answer },
+    ),
+
+  /* ---------------------- Structured reading lesson ---------------------- */
+
+  /** Persists the reader's position so "Continue reading" can resume. */
+  saveReadingPosition: (
+    attemptId: string,
+    contentId: string,
+    body: { sectionId?: string | null; pdfPage?: number | null; activeSeconds?: number },
+  ) =>
+    http.post<{
+      lastSectionId: string | null;
+      lastSectionIndex: number | null;
+      lastPdfPage: number | null;
+      sectionsCompleted: number;
+      totalSections: number;
+    }>(`/attempts/${attemptId}/content/${contentId}/reading/position`, body),
+
+  /** Marks a checkpoint-free section as read (server re-checks the lock). */
+  markReadingSection: (attemptId: string, contentId: string, sectionId: string, activeSeconds = 0) =>
+    http.post<ReadingSectionMutationResult>(
+      `/attempts/${attemptId}/content/${contentId}/reading/sections/${sectionId}/complete`,
+      { activeSeconds },
+    ),
+
+  submitReadingCheckpoint: (
+    attemptId: string,
+    contentId: string,
+    checkpointId: string,
+    answers: Record<string, string[]>,
+  ) =>
+    http.post<ReadingCheckpointResult>(
+      `/attempts/${attemptId}/content/${contentId}/reading/checkpoints/${checkpointId}/submit`,
+      { answers },
+    ),
+
+  readingResourceUrl: (attemptId: string, contentId: string, resourceId: string) =>
+    http.get<{ id: string; url: string | null; available: boolean }>(
+      `/attempts/${attemptId}/content/${contentId}/reading/resources/${resourceId}/url`,
+    ),
+
+  /** Optional study aid for the section currently being read. */
+  sectionSummary: (attemptId: string, contentId: string, sectionId: string) =>
+    http.post<ReadingSectionSummary>(
+      `/attempts/${attemptId}/content/${contentId}/reading/sections/${sectionId}/summary`,
+      {},
     ),
 
   complete: (attemptId: string, contentId: string) =>

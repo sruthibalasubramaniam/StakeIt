@@ -12,6 +12,8 @@ import {
   uuidParam,
   videoProgressSchema,
 } from '../validators/schemas';
+import { registerLearnerReadingRoutes } from './reading.routes';
+import { registerLearnerCertificateRoutes } from './certificate.routes';
 
 /**
  * Learning endpoints are scoped to a course attempt (`/api/attempts/:attemptId/...`)
@@ -52,6 +54,15 @@ attemptRouter.post(
   validate({ params: { ...attemptParams, contentId: uuidParam } }),
   LearningController.complete,
 );
+
+/* --------------------- Structured reading lessons ------------------------ */
+/*
+ * Position, section completion and checkpoint submission for the MOOC reader.
+ * Registered on the attempt router so every call inherits the same
+ * learner-role + ownership guarantees as the rest of `/attempts`.
+ */
+registerLearnerReadingRoutes(attemptRouter);
+registerLearnerCertificateRoutes(attemptRouter);
 
 attemptRouter.get('/:attemptId/pacing', validate({ params: attemptParams }), LearningController.pacing);
 attemptRouter.get('/:attemptId/settlement', validate({ params: attemptParams }), LearningController.settlement);

@@ -43,8 +43,8 @@ export function withTransaction<T>(
   options: { timeout?: number; maxWait?: number; isolationLevel?: 'Serializable' | 'ReadCommitted' } = {},
 ): Promise<T> {
   return prisma.$transaction(handler, {
-    timeout: options.timeout ?? 15_000,
-    maxWait: options.maxWait ?? 10_000,
+    timeout: options.timeout ?? env.TX_TIMEOUT_MS,
+    maxWait: options.maxWait ?? env.TX_MAX_WAIT_MS,
     isolationLevel: options.isolationLevel,
   });
 }

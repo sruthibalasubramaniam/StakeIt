@@ -33,6 +33,12 @@ export const AuthController = {
     res.status(200).json({ data: user });
   }),
 
+  updateEmailPreferences: asyncHandler(async (req: Request, res: Response) => {
+    const { userId } = authContext(req);
+    const data = await AuthService.setEmailPreference(userId, req.body.emailNotificationsEnabled);
+    res.status(200).json({ data });
+  }),
+
   changePassword: asyncHandler(async (req: Request, res: Response) => {
     const { userId } = authContext(req);
     await AuthService.changePassword(userId, req.body.currentPassword, req.body.newPassword);

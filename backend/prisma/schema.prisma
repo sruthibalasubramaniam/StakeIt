@@ -150,27 +150,41 @@ enum NotificationType {
   SYSTEM
 }
 
+/// Kind of supplementary material attached to a structured reading lesson.
+enum ReadingResourceKind {
+  /// Instructor-uploaded PDF stored in Supabase Storage (served by signed URL).
+  PDF
+  /// External article or Google Drive link. URL is validated at write time.
+  EXTERNAL_LINK
+  /// Embeddable resource (e.g. a Google Slides / Drive preview URL).
+  EMBED
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
 
 model User {
-  id           String    @id @default(uuid()) @db.Uuid
-  email        String    @unique
+  id                        String    @id @default(uuid()) @db.Uuid
+  email                     String    @unique
   /// Supabase auth user id (`sub` claim). Null when local auth is used.
-  supabaseId   String?   @unique @map("supabase_id")
+  supabaseId                String?   @unique @map("supabase_id")
   /// Only populated when AUTH_PROVIDER=local. Never returned by the API.
-  passwordHash String?   @map("password_hash")
-  role         Role      @default(LEARNER)
-  fullName     String    @map("full_name")
-  avatarUrl    String?   @map("avatar_url")
-  headline     String?
-  bio          String?
-  expertise    String[]  @default([])
-  isActive     Boolean   @default(true) @map("is_active")
-  lastLoginAt  DateTime? @map("last_login_at")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  passwordHash              String?   @map("password_hash")
+  role                      Role      @default(LEARNER)
+  fullName                  String    @map("full_name")
+  avatarUrl                 String?   @map("avatar_url")
+  headline                  String?
+  bio                       String?
+  expertise                 String[]  @default([])
+  isActive                  Boolean   @default(true) @map("is_active")
+  /// Learner-controlled opt-in for *optional* email (reminders, nudges).
+  /// Transactional mail about the learner's own actions (enrolment, completion,
+  /// settlement) is always sent — those are receipts, not marketing.
+  emailNotificationsEnabled Boolean   @default(true) @map("email_notifications_enabled")
+  lastLoginAt               DateTime? @map("last_login_at")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
 
   wallet              Wallet?
   coursesTaught       Course[]                @relation("CourseInstructor")
@@ -187,6 +201,11 @@ model User {
   badges              InstructorBadge[]       @relation("BadgeInstructor")
   awardedBadges       InstructorBadge[]       @relation("BadgeAwardedBy")
   notifications       Notification[]
+  emailDeliveries     EmailDelivery[]
+
+  readingSectionProgress       ReadingSectionProgress[]
+  readingCheckpointSubmissions ReadingCheckpointSubmission[]
+  Certificate                  Certificate[]
 
   @@index([role])
   @@index([isActive])
@@ -340,6 +359,7 @@ model Course {
   attempts          CourseAttempt[]
   stakes            Stake[]
   reviews           CourseReview[]
+  Certificate       Certificate[]
 
   @@index([status, publishedAt])
   @@index([instructorId])
@@ -411,6 +431,20 @@ model ModuleContent {
   /// Answer key — never exposed by learner-facing endpoints.
   comprehensionAnswer        String? @map("comprehension_answer")
 
+  // --- STRUCTURED READING (MOOC-style lesson) ------------------------------
+  /// Learning objectives shown above the first section.
+  readingObjectives  String[]  @default([]) @map("reading_objectives")
+  /// Reference list, `[{ "label": "...", "url": "...", "note": "..." }]`.
+  readingReferences  Json      @default("[]") @map("reading_references")
+  /// Publication gate for structured lessons. `null` = draft.
+  /// Legacy readings (no sections, plain `readingBody`) are treated as published
+  /// so existing courses keep working; a structured lesson only becomes readable
+  /// by learners once this timestamp is set.
+  readingPublishedAt DateTime? @map("reading_published_at")
+  /// Incremented on every content change so learner progress can be traced to
+  /// the version the learner actually completed.
+  readingVersion     Int       @default(1) @map("reading_version")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -418,6 +452,9 @@ model ModuleContent {
   quiz       Quiz?
   assessment Assessment?
   progress   ContentProgress[]
+
+  readingSections  ReadingSection[]
+  readingResources ReadingResource[]
 
   @@index([moduleId, orderIndex])
   @@index([type])
@@ -660,6 +697,10 @@ model CourseAttempt {
   submissions  AssessmentSubmission[]
   stakes       Stake[]
 
+  readingSectionProgress       ReadingSectionProgress[]
+  readingCheckpointSubmissions ReadingCheckpointSubmission[]
+  Certificate                  Certificate?
+
   @@unique([enrollmentId, attemptNumber])
   @@index([userId, status])
   @@index([status, normalDeadline])
@@ -684,6 +725,19 @@ model ContentProgress {
   // --- reading verification ------------------------------------------------
   readingReachedEnd   Boolean  @default(false) @map("reading_reached_end")
   comprehensionPassed Boolean? @map("comprehension_passed")
+
+  // --- structured reading position -----------------------------------------
+  /// Last section the learner opened (no FK on purpose: deleted sections must
+  /// not cascade into progress, the reader simply falls back to the first
+  /// incomplete section).
+  lastSectionId           String? @map("last_section_id") @db.Uuid
+  lastSectionIndex        Int?    @map("last_section_index")
+  /// Last page of an embedded PDF resource the learner reported.
+  lastPdfPage             Int?    @map("last_pdf_page")
+  /// Cached count of completed sections inside this lesson.
+  readingSectionsDone     Int     @default(0) @map("reading_sections_done")
+  /// `ModuleContent.readingVersion` at the moment the lesson was completed.
+  readingCompletedVersion Int?    @map("reading_completed_version")
 
   activeSeconds   Int       @default(0) @map("active_seconds")
   firstAccessedAt DateTime? @map("first_accessed_at")
@@ -789,8 +843,231 @@ model Notification {
   readAt    DateTime?        @map("read_at")
   createdAt DateTime         @default(now()) @map("created_at")
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  EmailDelivery EmailDelivery?
 
   @@index([userId, isRead, createdAt])
   @@map("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Structured reading lessons (MOOC-style reader)
+//
+// A READING `ModuleContent` may be authored as a sequence of sections, each
+// optionally guarded by a checkpoint. Section unlock state and lesson
+// completion are derived from `ReadingSectionProgress`, never from the client.
+// ---------------------------------------------------------------------------
+
+model ReadingSection {
+  id               String   @id @default(uuid()) @db.Uuid
+  contentId        String   @map("content_id") @db.Uuid
+  title            String
+  /// Sanitised rich-text HTML (allow-listed tags only, see `lib/richText.ts`).
+  bodyHtml         String   @map("body_html") @db.Text
+  orderIndex       Int      @map("order_index")
+  estimatedMinutes Int?     @map("estimated_minutes")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  content    ModuleContent            @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  checkpoint ReadingCheckpoint?
+  progress   ReadingSectionProgress[]
+
+  @@index([contentId, orderIndex])
+  @@map("reading_sections")
+}
+
+model ReadingCheckpoint {
+  id           String   @id @default(uuid()) @db.Uuid
+  /// Denormalised for cheap "does this lesson have checkpoints" lookups.
+  contentId    String   @map("content_id") @db.Uuid
+  sectionId    String   @unique @map("section_id") @db.Uuid
+  title        String
+  prompt       String?
+  /// Percentage (0-100) required to clear the checkpoint. Defaults to 100.
+  passingScore Int      @default(100) @map("passing_score")
+  /// `null` = unlimited attempts.
+  maxAttempts  Int?     @map("max_attempts")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  section     ReadingSection                @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  questions   ReadingCheckpointQuestion[]
+  submissions ReadingCheckpointSubmission[]
+
+  @@index([contentId])
+  @@map("reading_checkpoints")
+}
+
+model ReadingCheckpointQuestion {
+  id           String       @id @default(uuid()) @db.Uuid
+  checkpointId String       @map("checkpoint_id") @db.Uuid
+  type         QuestionType @default(SINGLE_CHOICE)
+  prompt       String
+  explanation  String?
+  points       Int          @default(1)
+  orderIndex   Int          @map("order_index")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  checkpoint ReadingCheckpoint         @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
+  options    ReadingCheckpointOption[]
+
+  @@index([checkpointId, orderIndex])
+  @@map("reading_checkpoint_questions")
+}
+
+model ReadingCheckpointOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  /// Answer key — stripped from every learner-facing payload.
+  isCorrect  Boolean @default(false) @map("is_correct")
+  orderIndex Int     @map("order_index")
+
+  question ReadingCheckpointQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId, orderIndex])
+  @@map("reading_checkpoint_options")
+}
+
+model ReadingSectionProgress {
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @map("user_id") @db.Uuid
+  attemptId          String    @map("attempt_id") @db.Uuid
+  contentId          String    @map("content_id") @db.Uuid
+  sectionId          String    @map("section_id") @db.Uuid
+  isCompleted        Boolean   @default(false) @map("is_completed")
+  completedAt        DateTime? @map("completed_at")
+  /// `null` when the section has no checkpoint (or before the first attempt).
+  checkpointPassed   Boolean?  @map("checkpoint_passed")
+  checkpointAttempts Int       @default(0) @map("checkpoint_attempts")
+  lastViewedAt       DateTime? @map("last_viewed_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  attempt CourseAttempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  section ReadingSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+
+  /// One row per learner attempt per section — the duplicate-completion guard.
+  @@unique([attemptId, sectionId])
+  @@index([attemptId, contentId])
+  @@index([userId])
+  @@map("reading_section_progress")
+}
+
+model ReadingCheckpointSubmission {
+  id            String   @id @default(uuid()) @db.Uuid
+  checkpointId  String   @map("checkpoint_id") @db.Uuid
+  attemptId     String   @map("attempt_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  attemptNumber Int      @map("attempt_number")
+  /// `{ "<questionId>": ["<optionId>"] }`
+  answers       Json     @default("{}")
+  score         Float    @default(0)
+  maxScore      Float    @default(0) @map("max_score")
+  percentage    Float    @default(0)
+  passed        Boolean  @default(false)
+  submittedAt   DateTime @default(now()) @map("submitted_at")
+
+  checkpoint ReadingCheckpoint @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
+  attempt    CourseAttempt     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([checkpointId, attemptId, attemptNumber])
+  @@index([attemptId])
+  @@index([checkpointId, passed])
+  @@map("reading_checkpoint_submissions")
+}
+
+model ReadingResource {
+  id             String              @id @default(uuid()) @db.Uuid
+  contentId      String              @map("content_id") @db.Uuid
+  kind           ReadingResourceKind
+  title          String
+  /// External URL for EXTERNAL_LINK / EMBED. Empty for PDF (signed on demand).
+  url            String?
+  /// Supabase Storage object path for uploaded PDFs.
+  storagePath    String?             @map("storage_path")
+  fileName       String?             @map("file_name")
+  mimeType       String?             @map("mime_type")
+  sizeBytes      Int?                @map("size_bytes")
+  orderIndex     Int                 @map("order_index")
+  isDownloadable Boolean             @default(true) @map("is_downloadable")
+  /// Plain text extracted from an imported document (PDF/DOCX/MD/TXT). Kept so a
+  /// lesson can be re-split without re-uploading and so AI helpers have a text
+  /// source when the material is a PDF.
+  extractedText  String?             @map("extracted_text") @db.Text
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+
+  content ModuleContent @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([contentId, orderIndex])
+  @@map("reading_resources")
+}
+
+// ---------------------------------------------------------------------------
+// Transactional email
+//
+// One row per notification actually emailed. `notificationId` is unique, which
+// is what makes delivery idempotent: a scheduler that runs twice, a retried
+// request, or a double-clicked button can never produce a second email for the
+// same in-app notification.
+// ---------------------------------------------------------------------------
+
+model EmailDelivery {
+  id             String           @id @default(uuid()) @db.Uuid
+  notificationId String           @unique @map("notification_id") @db.Uuid
+  userId         String           @map("user_id") @db.Uuid
+  type           NotificationType
+  toEmail        String           @map("to_email")
+  subject        String
+  /// SENT | FAILED | SKIPPED
+  status         String           @default("SENT")
+  providerId     String?          @map("provider_id")
+  error          String?
+  createdAt      DateTime         @default(now()) @map("created_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("email_deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Certificates
+//
+// One row per completed attempt. `code` is the public verification handle;
+// `attemptId` is unique, which is what makes issuing idempotent — asking twice
+// returns the same certificate instead of minting a second one.
+//
+// The learner name and course title are snapshotted at issue time so that
+// renaming a course or a person does not silently rewrite an issued document.
+// ---------------------------------------------------------------------------
+
+model Certificate {
+  id             String    @id @default(uuid()) @db.Uuid
+  /// Public verification code, e.g. SI-2026-4F2C9A.
+  code           String    @unique
+  attemptId      String    @unique @map("attempt_id") @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  courseId       String    @map("course_id") @db.Uuid
+  learnerName    String    @map("learner_name")
+  courseTitle    String    @map("course_title")
+  issuer         String
+  completionDate DateTime  @map("completion_date")
+  issuedAt       DateTime  @default(now()) @map("issued_at")
+  revokedAt      DateTime? @map("revoked_at")
+  revokedBy      String?   @map("revoked_by") @db.Uuid
+  revokedReason  String?   @map("revoked_reason")
+
+  attempt CourseAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course  Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([courseId])
+  @@map("certificates")
 }

@@ -371,7 +371,7 @@ export const CompletionService = {
         throw conflict('This attempt was already settled.', 'ALREADY_SETTLED');
       }
 
-      const context = await LearningService.loadAttempt(attemptId, attempt.userId);
+      const context = await LearningService.loadAttempt(attemptId, attempt.userId, tx);
       const sequence = LearningService.buildSequence(context);
 
       const modulesIncomplete = sequence.modules.filter((module) => module.isRequired && !module.isCompleted);

@@ -9,6 +9,7 @@ import { FailureReceipt } from '../../components/domain/SettlementReceipt';
 import { useToast } from '../../context/ToastContext';
 import { errorMessage } from '../../services/api';
 import { formatCountdown, formatDate, formatPercent, formatPoints, statusLabel } from '../../utils/format';
+import { CertificateCard } from '../../components/domain/CertificateCard';
 import { cn } from '../../utils/cn';
 
 /**
@@ -168,6 +169,8 @@ export function LearningHubPage() {
               </span>
             </div>
           </Card>
+
+          <CertificateCard attemptId={attempt.id} completed={attempt.status === 'COMPLETED'} />
 
           <Card>
             <CardHeader title="Stake & rewards" />

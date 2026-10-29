@@ -192,6 +192,11 @@ function ContentRow({
               </span>
             ) : null}
             {content.estimatedMinutes ? <span>{content.estimatedMinutes} min</span> : null}
+            {content.progress.reading ? (
+              <span className="metric">
+                {content.progress.reading.completedSections}/{content.progress.reading.totalSections} sections
+              </span>
+            ) : null}
           </span>
         </div>
       </div>

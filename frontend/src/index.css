@@ -72,6 +72,125 @@
   .progress-fill {
     @apply h-full rounded-none transition-[width] duration-300 ease-out;
   }
+
+  /*
+   * Reading lesson typography.
+   *
+   * Section HTML is sanitised server-side and rendered here, so the styling has
+   * to cover the whole allow-list. `--reading-font-size` is set inline by the
+   * reader's text-size control, which keeps the scale in one place instead of
+   * multiplying utility classes.
+   */
+  .reading-prose {
+    font-size: var(--reading-font-size, 16px);
+    line-height: 1.75;
+    color: theme('colors.on-surface');
+    overflow-wrap: anywhere;
+  }
+
+  .reading-prose > * + * {
+    margin-top: 1rem;
+  }
+
+  .reading-prose h2 {
+    @apply font-headline-lg text-headline-lg text-on-surface;
+    margin-top: 2rem;
+  }
+
+  .reading-prose h3 {
+    @apply font-headline-md text-headline-md text-on-surface;
+    margin-top: 1.75rem;
+  }
+
+  .reading-prose h4 {
+    @apply font-headline-sm text-headline-sm text-on-surface;
+    margin-top: 1.5rem;
+  }
+
+  .reading-prose p {
+    margin-top: 0.875rem;
+  }
+
+  .reading-prose strong {
+    @apply font-semibold text-on-surface;
+  }
+
+  .reading-prose a {
+    @apply text-primary underline decoration-primary-fixed-dim underline-offset-2 hover:decoration-primary;
+  }
+
+  .reading-prose ul {
+    @apply list-disc pl-6;
+  }
+
+  .reading-prose ol {
+    @apply list-decimal pl-6;
+  }
+
+  .reading-prose li + li {
+    margin-top: 0.35rem;
+  }
+
+  .reading-prose blockquote {
+    @apply border-l-2 border-primary-fixed-dim pl-space-md text-on-surface-variant;
+    font-style: italic;
+  }
+
+  .reading-prose pre {
+    @apply overflow-x-auto rounded border border-outline-variant bg-surface-container-low p-space-md;
+    font-size: 0.875em;
+    line-height: 1.6;
+  }
+
+  .reading-prose code {
+    @apply rounded bg-surface-container px-1 py-0.5 font-mono;
+    font-size: 0.875em;
+  }
+
+  .reading-prose pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .reading-prose img {
+    @apply max-w-full rounded border border-outline-variant;
+  }
+
+  .reading-prose figure figcaption {
+    @apply mt-1 font-body-sm text-body-sm text-on-surface-variant;
+  }
+
+  .reading-prose table {
+    @apply w-full border-collapse text-left;
+    font-size: 0.9375em;
+  }
+
+  .reading-prose th {
+    @apply border border-outline-variant bg-surface-container-low px-space-sm py-1.5 font-label-md text-label-md;
+  }
+
+  .reading-prose td {
+    @apply border border-outline-variant px-space-sm py-1.5 align-top;
+  }
+
+  .reading-prose hr {
+    @apply border-outline-variant;
+    margin-top: 1.5rem;
+  }
+}
+
+/* Editor surface mirrors the reader so authoring WYSIWYG-adjacent. */
+.reading-editor-surface {
+  @apply min-h-[240px] w-full rounded border border-outline-variant bg-surface-container-lowest px-space-md py-space-sm outline-none;
+}
+
+.reading-editor-surface:focus {
+  @apply border-primary-container ring-2 ring-primary-container/10;
+}
+
+.reading-editor-surface:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  pointer-events: none;
 }
 
 /* Printing a settlement receipt should stay legible. */

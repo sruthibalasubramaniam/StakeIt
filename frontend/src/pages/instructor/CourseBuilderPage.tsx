@@ -150,7 +150,12 @@ export function CourseBuilderPage() {
         ...current,
         [moduleId]: { type: draft.type, title: '', videoUrl: '', body: '' },
       }));
-      toast.success('Content added', 'A quiz or assessment item also needs questions — use the "Questions" button.');
+      toast.success(
+        'Content added',
+        draft.type === 'READING'
+          ? 'Open “Reading content” to author sections, checkpoints, PDFs and links.'
+          : 'A quiz or assessment item also needs questions — use the "Questions" button.',
+      );
       await modules.refetch();
     } catch (caught) {
       toast.error('Could not add content', errorMessage(caught));
@@ -220,7 +225,13 @@ export function CourseBuilderPage() {
       toast.success('Questions saved');
       setQuestionEditor(null);
       setQuestionDrafts([EMPTY_QUESTION]);
-      await modules.refetch();
+      /*
+       * Both queries can show question counts: `modules` feeds the quiz card,
+       * `course` (the detail payload) feeds the final-assessment card and the
+       * publish checklist. Refetching only `modules` left the final assessment
+       * reading "0 question(s)" until a full page reload.
+       */
+      await Promise.all([modules.refetch(), course.refetch()]);
     } catch (caught) {
       toast.error('Could not save questions', errorMessage(caught));
     } finally {
@@ -500,7 +511,15 @@ export function CourseBuilderPage() {
         <Divider />
 
         <div className="flex flex-col">
-          {moduleList.length === 0 ? (
+          {/*
+            The module list arrives after the course detail, so an unguarded
+            `length === 0` check flashes the "No modules yet" empty state over a
+            course that does have modules. Show a loading line until the first
+            response lands.
+          */}
+          {modules.loading && modules.data === null ? (
+            <div className="p-space-lg font-body-md text-body-md text-on-surface-variant">Loading modules…</div>
+          ) : moduleList.length === 0 ? (
             <EmptyState
               icon="layers"
               title="No modules yet"
@@ -580,12 +599,24 @@ export function CourseBuilderPage() {
                                 {content.type.replace('_', ' ').toLowerCase()}
                                 {questionCount !== null ? ` · ${questionCount} question(s)` : ''}
                                 {content.isRequired ? ' · required' : ' · optional'}
+                                {content.type === 'READING' && (content._count?.readingSections ?? 0) > 0
+                                  ? ` · ${content._count!.readingSections} section(s) · ${
+                                      content.readingPublishedAt ? 'published' : 'draft'
+                                    }`
+                                  : ''}
                               </span>
                             </span>
                           </span>
 
-                          <span className="flex items-center gap-space-xs">
-                            {content.quiz ? (
+                           <span className="flex items-center gap-space-xs">
+                             {content.type === 'READING' ? (
+                               <Link to={`${areaBase}/${courseId}/reading/${content.id}`}>
+                                 <Button size="sm" variant="secondary" icon="edit_document">
+                                   Reading content
+                                 </Button>
+                               </Link>
+                             ) : null}
+                             {content.quiz ? (
                               <Button
                                 size="sm"
                                 variant="secondary"
@@ -691,7 +722,7 @@ export function CourseBuilderPage() {
                   {(contentDrafts[module.id]?.type ?? 'VIDEO') === 'READING' ? (
                     <Textarea
                       rows={3}
-                      placeholder="Reading body"
+                      placeholder="Optional plain-text body (legacy). Add sections, checkpoints and PDFs in the reading editor after creating the item."
                       value={contentDrafts[module.id]?.body ?? ''}
                       onChange={(event) =>
                         setContentDrafts((current) => ({
@@ -825,6 +856,19 @@ export function CourseBuilderPage() {
                   .flatMap((module) => module.contents)
                   .filter((content) => content.type === 'QUIZ' || content.type === 'MODULE_ASSESSMENT')
                   .every((content) => (content.quiz?._count.questions ?? content.assessment?._count.questions ?? 0) > 0),
+            },
+            {
+              label: 'Every reading lesson is published and has content',
+              done:
+                moduleList.length > 0 &&
+                moduleList
+                  .flatMap((module) => module.contents)
+                  .filter((content) => content.type === 'READING')
+                  .every((content) =>
+                    (content._count?.readingSections ?? 0) > 0
+                      ? Boolean(content.readingPublishedAt)
+                      : Boolean((content.readingBody ?? '').trim()),
+                  ),
             },
             {
               label: 'Final assessment exists and has questions',

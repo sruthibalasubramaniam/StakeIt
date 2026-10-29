@@ -98,6 +98,11 @@ export const updateProfileSchema = z
   })
   .strict();
 
+/** Learner control over *optional* email (reminders, nudges). Receipts ignore it. */
+export const emailPreferenceSchema = z
+  .object({ emailNotificationsEnabled: z.boolean() })
+  .strict();
+
 export const changePasswordSchema = z
   .object({
     currentPassword: z.string().min(1),
@@ -268,6 +273,82 @@ export const submissionSchema = z
   .object({
     answers: answersSchema,
     timeSpentSeconds: z.coerce.number().min(0).max(86_400).optional(),
+  })
+  .strict();
+
+/* -------------------------------------------------------------------------- */
+/* Structured reading lessons                                                  */
+/* -------------------------------------------------------------------------- */
+
+const readingUrl = z.string().trim().min(1, 'A URL is required.').max(2000);
+
+export const readingLessonMetaSchema = z
+  .object({
+    description: z.string().max(2000).nullish(),
+    estimatedMinutes: z.coerce.number().int().min(0).max(6000).nullish(),
+    objectives: z.array(z.string().max(300)).max(12).optional(),
+    references: z
+      .array(z.object({ label: z.string().min(1).max(200), url: readingUrl, note: z.string().max(500).nullish() }))
+      .max(20)
+      .optional(),
+  })
+  .strict();
+
+export const readingSectionSchema = z
+  .object({
+    title: z.string().min(1, 'A section needs a title.').max(200),
+    // Sanitised server-side; the cap is the raw authoring limit.
+    bodyHtml: z.string().max(60_000).default(''),
+    estimatedMinutes: z.coerce.number().int().min(0).max(600).nullish(),
+  })
+  .strict();
+
+export const readingSectionUpdateSchema = readingSectionSchema.partial();
+
+export const readingCheckpointSchema = z
+  .object({
+    title: z.string().min(1).max(200).optional(),
+    prompt: z.string().max(1000).nullish(),
+    passingScore: z.coerce.number().int().min(0).max(100).optional(),
+    maxAttempts: z.coerce.number().int().min(1).max(20).nullish(),
+    questions: z
+      .array(
+        z.object({
+          type: z.enum(['SINGLE_CHOICE', 'MULTI_CHOICE', 'TRUE_FALSE']).optional(),
+          prompt: z.string().min(1).max(2000),
+          explanation: z.string().max(2000).nullish(),
+          points: z.coerce.number().int().min(1).max(50).optional(),
+          options: z
+            .array(z.object({ label: z.string().min(1).max(1000), isCorrect: z.boolean().optional() }))
+            .min(2, 'Every question needs at least two options.')
+            .max(8),
+        }),
+      )
+      .min(1, 'A checkpoint needs at least one question.')
+      .max(10),
+  })
+  .strict();
+
+export const readingResourceLinkSchema = z
+  .object({
+    kind: z.enum(['EXTERNAL_LINK', 'EMBED']),
+    title: z.string().min(1).max(200),
+    url: readingUrl,
+    isDownloadable: z.boolean().optional(),
+  })
+  .strict();
+
+export const readingPositionSchema = z
+  .object({
+    sectionId: uuidParam.nullish(),
+    pdfPage: z.coerce.number().int().min(1).max(5000).nullish(),
+    activeSeconds: z.coerce.number().min(0).max(3600).optional(),
+  })
+  .strict();
+
+export const readingCheckpointSubmissionSchema = z
+  .object({
+    answers: z.record(z.union([z.array(z.string()), z.string()])),
   })
   .strict();
 

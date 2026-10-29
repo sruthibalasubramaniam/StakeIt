@@ -41,10 +41,18 @@ progress, deadlines and at-risk status, view the final weighted score and settle
 manage the wallet and transaction ledger, review stakes and rewards, retry failed attempts,
 rate completed courses, manage notifications.
 
+**MOOC reader** — structured reading lessons with a table of contents, adjustable text size,
+estimated reading time, embedded PDF viewer with page position, external resources, inline
+knowledge checks that gate the next section, "continue reading" that resumes the last section
+and page on any device, and previous/next section navigation — all backed by server-enforced
+section unlocking rather than client state.
+
 **Instructor** — dashboard with learner/completion/score/commitment/rating analytics, course
 CRUD, a step-based course builder (modules, ordering, videos, readings, quizzes, assessments,
-final test, commitment options, preview, publish), learner roster with exceptional-case
-actions, per-course analytics and funnel, reputation tier and badge status.
+final test, commitment options, preview, publish), a rich-text reading-lesson editor
+(sections, reorder, checkpoints with answer keys, PDF upload, external links, preview,
+draft/publish), learner roster with exceptional-case actions, per-course analytics and
+funnel, reputation tier and badge status.
 
 **Admin** — platform dashboard, user management (roles, activation, point adjustments),
 course oversight, instructor roster with reputation metrics, reward pool ledger and
@@ -155,7 +163,7 @@ Stake It/
 
 ## Database schema overview
 
-24 models. Highlights:
+31 models. Highlights:
 
 | Model | Purpose |
 |---|---|
@@ -171,11 +179,14 @@ Stake It/
 | `WalletTransaction` | append-only point ledger with `balanceAfter` |
 | `RewardPool`, `RewardPoolTransaction` | forfeiture sink and its own ledger |
 | `CourseReview`, `InstructorBadge`, `Notification` | ratings, reputation, in-app events |
+| `ReadingSection`, `ReadingResource` | ordered sections of a structured reading lesson + attached PDFs/links |
+| `ReadingCheckpoint`, `ReadingCheckpointQuestion`, `ReadingCheckpointOption` | per-section knowledge checks with answer keys |
+| `ReadingSectionProgress`, `ReadingCheckpointSubmission` | per-attempt section completion, attempt counts, graded submissions |
 
 Enums: `Role`, `CourseStatus`, `Difficulty`, `ContentType`, `ContentStatus`,
 `EnrollmentStatus`, `AttemptStatus`, `StakeType`, `StakeStatus`, `WalletTransactionType`,
 `RewardPoolTransactionType`, `AssessmentType`, `QuestionType`, `AttemptGradeStatus`,
-`BadgeTier`, `NotificationType`.
+`BadgeTier`, `NotificationType`, `ReadingResourceKind`.
 
 ---
 
@@ -197,6 +208,23 @@ Copy `.env.example` → `.env` (root, for compose) and
 | `SIGNUP_WALLET_GRANT` | backend | welcome points (default 1500) |
 | `AT_RISK_THRESHOLD_PERCENT` | backend | pacing gap that flags AT_RISK (default 15) |
 | `SCHEDULER_ENABLED` | backend | `false` disables cron (tests do this) |
+| `SUPABASE_STORAGE_BUCKET` | backend | private bucket for reading PDFs (default `course-assets`) |
+| `READING_PDF_MAX_MB` | backend | max accepted PDF size (default `10`) |
+| `READING_SIGNED_URL_TTL_SECONDS` | backend | signed-URL lifetime for private PDFs (default `900`) |
+| `AI_PROVIDER` | backend | `openai` \| `gemini` \| `anthropic` \| `compatible`; unset = AI off |
+| `AI_API_KEY` | backend | provider key; empty disables every AI endpoint |
+| `AI_MODEL` | backend | model id; defaults per provider |
+| `AI_BASE_URL` | backend | override for OpenAI-compatible endpoints |
+| `AI_MAX_OUTPUT_TOKENS` / `AI_TIMEOUT_MS` | backend | per-call budget (defaults `3000` / `30000`) |
+| `EMAIL_ENABLED` | backend | `true` turns transactional email on; anything else = off |
+| `EMAIL_PROVIDER` | backend | `resend` (needs a verified domain) or `smtp` (sends through a real mailbox) |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | backend | SMTP server; defaults `smtp.gmail.com:465`, secure `true` |
+| `SMTP_USER` / `SMTP_PASS` | backend | mailbox credentials — Gmail needs an **App Password**, not the account password |
+| `RESEND_API_KEY` | backend | Resend key; empty disables sending (resend transport only) |
+| `EMAIL_FROM` | backend | sender on a Resend-verified domain |
+| `EMAIL_REPLY_TO` | backend | optional reply-to |
+| `EMAIL_TIMEOUT_MS` | backend | per-send timeout (default `15000`) |
+| `APP_URL` | backend | public origin used in email links |
 | `VITE_API_URL` | frontend | API base URL baked into the bundle |
 
 No secrets are committed. `.env` files are gitignored; only `.env.example` ships.
@@ -295,6 +323,140 @@ npm run db:studio     # Prisma Studio
 ```
 
 Note: `db:seed` is safe to re-run — it clears the demo dataset first.
+
+---
+
+## Reading lessons (MOOC reader)
+
+Reading content exists in two shapes, and both are supported by the same API:
+
+| Shape | Data | Completion rule |
+|---|---|---|
+| **Structured** (new) | ordered `ReadingSection` rows + optional checkpoints + attached PDFs/links | every section complete; checkpoint sections require a passed check |
+| **Legacy** | a single `ModuleContent.readingBody` string | scroll to the end (+ comprehension check if configured) |
+
+A legacy reading keeps working untouched — it is treated as published. A structured
+lesson is a **draft** until `readingPublishedAt` is set, and learners receive
+`422 CONTENT_LOCKED { reason: "NOT_PUBLISHED" }` while it stays a draft.
+
+### How progression is enforced
+
+Scrolling never completes a structured lesson. The server derives everything from
+`ReadingSectionProgress`:
+
+1. Section *N* is readable only when sections *1…N-1* are complete
+   (`computeSectionUnlocks` in `src/lib/reading.ts`).
+2. A section with a checkpoint completes **only** when the checkpoint is passed.
+   Marking it read returns `422 CHECKPOINT_REQUIRED`.
+3. A section without a checkpoint completes on an explicit "mark as read" call.
+4. `POST /attempts/:id/content/:id/complete` re-checks the whole lesson and refuses
+   with `422 INVALID_PROGRESS` while anything is outstanding.
+5. Progress rows are unique per `(attemptId, sectionId)`, so a repeated call cannot
+   create a second completion. Checkpoint submissions are unique per
+   `(checkpointId, attemptId, attemptNumber)`, and `maxAttempts` is enforced.
+6. Editing published content never deletes progress: completion is never downgraded,
+   and the lesson version is bumped so `readingCompletedVersion` records what the
+   learner actually completed.
+
+### Private PDF storage (Supabase Storage)
+
+Reading PDFs are private course content. The API uploads with the **service-role
+key** (server-side only) and hands the browser a short-lived signed URL — no storage
+credential ever reaches the client.
+
+```bash
+# 1. Create a PRIVATE bucket (no public read policy) in Supabase → Storage
+#    name it whatever you set in SUPABASE_STORAGE_BUCKET (default: course-assets)
+# 2. Point the API at it
+#    SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_STORAGE_BUCKET
+#    READING_PDF_MAX_MB=10
+#    READING_SIGNED_URL_TTL_SECONDS=900
+```
+
+Uploads are `POST /api/content/:contentId/reading/resources/upload` with the raw PDF
+as the request body (`Content-Type: application/pdf`, display name in `x-file-name`).
+Validation happens before anything is stored: declared type, size limit, `%PDF-`
+magic bytes and the `%%EOF` trailer. Storage paths are generated server-side
+(`courses/<courseId>/reading/<contentId>/<uuid>.pdf`), so a file name can never
+influence the object key.
+
+When storage is unconfigured, the lesson still loads and PDF rows report
+`available: false`; uploads return `503 STORAGE_NOT_CONFIGURED`.
+
+### Database migration
+
+The reading feature ships as one **additive** migration (new tables, new nullable
+or defaulted columns — no data is rewritten):
+
+```bash
+cd backend
+npx prisma migrate deploy     # apply 20251026120000_structured_reading_lessons
+npx prisma generate           # regenerate the client
+```
+
+**Pooler caveat (verified against this project's Supabase instance):** `prisma migrate`
+commands hang indefinitely when `DATABASE_URL` points at the transaction pooler
+(`...pooler.supabase.com:6543`). The query engine works fine over that port — only the
+migration engine does not. Run migrations against the **direct** connection
+(`db.<project-ref>.supabase.co:5432`) or the session pooler (`:5432`).
+
+If you only have the pooler URL to hand, `backend/scripts/apply-reading-migration.js`
+applies this migration through the query engine and records it in `_prisma_migrations`
+with the correct checksum, so a later `migrate deploy` treats it as already applied:
+
+```bash
+cd backend
+node scripts/apply-reading-migration.js   # idempotent; prints the tables it created
+```
+
+To confirm the bucket is wired correctly before trusting the upload UI, run the storage
+round-trip probe — it uploads a tiny PDF, mints a signed URL, fetches it, deletes it and
+checks the signature is revoked:
+
+```bash
+cd backend
+node scripts/storage-probe.js
+# upload=ok … signed_fetch_status=200 bytes=118 matches=true … delete=ok
+# signed_url_after_delete_status=400 (proves the bucket is private)
+```
+
+If you prefer schema push on a disposable database: `npx prisma db push`.
+
+### Reading API
+
+| Method | Path | Who |
+|---|---|---|
+| `GET` | `/api/content/:contentId/reading` | instructor/admin — full draft incl. answer keys |
+| `PUT` | `/api/content/:contentId/reading` | lesson description, objectives, references |
+| `POST` | `/api/content/:contentId/reading/sections` | add section |
+| `PUT` / `DELETE` | `/api/content/:contentId/reading/sections/:sectionId` | edit / remove |
+| `PATCH` | `/api/content/:contentId/reading/sections/reorder` | reorder (`orderedIds`) |
+| `PUT` / `DELETE` | `/api/content/:contentId/reading/sections/:sectionId/checkpoint` | upsert / remove |
+| `POST` | `/api/content/:contentId/reading/publish` · `/unpublish` | publication gate |
+| `GET` | `/api/content/:contentId/reading/preview` | instructor preview + publish checklist |
+| `POST` | `/api/content/:contentId/reading/resources` | attach link/embed (http/https only) |
+| `POST` | `/api/content/:contentId/reading/resources/upload` | raw PDF upload |
+| `DELETE` | `/api/content/:contentId/reading/resources/:resourceId` | detach (removes the object) |
+| `POST` | `/api/attempts/:attemptId/content/:contentId/reading/position` | learner — resume pointer |
+| `POST` | `/api/attempts/:attemptId/content/:contentId/reading/sections/:sectionId/complete` | mark read |
+| `POST` | `/api/attempts/:attemptId/content/:contentId/reading/checkpoints/:checkpointId/submit` | grade + unlock |
+| `GET` | `/api/attempts/:attemptId/content/:contentId/reading/resources/:resourceId/url` | signed URL |
+
+Section HTML is sanitised **server-side on write** with a tag/attribute allow-list
+(`src/lib/richText.ts`): no `<script>`, `<iframe>`, event handlers, inline styles,
+`javascript:` or `data:` URLs. The reader renders only that sanitised HTML.
+
+### Frontend surfaces
+
+| Screen | Route |
+|---|---|
+| Reader (TOC, text size, checkpoints, PDF viewer, resume) | `/learn/:enrollmentId/content/:contentId` |
+| Lesson editor (sections, checkpoints, resources, publish) | `/instructor/courses/:courseId/reading/:contentId` |
+| Same editor for administrators | `/admin/courses/:courseId/reading/:contentId` |
+
+The reader saves position on every section change and on a 30-second heartbeat, so
+"Continue reading" resumes the same section and PDF page after a refresh, a logout
+or on another device.
 
 ---
 
@@ -454,6 +616,8 @@ URL; see `backend/.env.example` and the `directUrl` note in
 | Curriculum | `GET|POST /api/courses/:id/modules`, `PATCH /api/courses/:id/modules/reorder`, `PUT /api/modules/:id`, `POST /api/modules/:id/content`, `PUT /api/content/:id`, `PUT /api/quizzes/:id/questions`, `PUT /api/assessments/:id/questions`, `PUT /api/courses/:id/commitment-options`, `POST /api/courses/:id/final-assessment` |
 | Enrolment | `POST /api/courses/:id/enroll`, `GET /api/enrollments`, `/enrollments/:id`, `POST /api/enrollments/:id/retry|withdraw` |
 | Learning | `GET /api/enrollments/:id/learning-state`, `GET /api/attempts/:id/content/:contentId`, `POST …/progress`, `…/complete`, `…/comprehension`, `GET /api/attempts/:id/pacing` |
+| Reading lessons | `GET|PUT /api/content/:id/reading`, `POST|PUT|DELETE /api/content/:id/reading/sections[/:sectionId]`, `PATCH …/sections/reorder`, `PUT|DELETE …/sections/:sectionId/checkpoint`, `POST …/reading/publish|unpublish`, `GET …/reading/preview`, `POST …/reading/resources[/upload]`, `DELETE …/resources/:resourceId` |
+| Reading progress | `POST /api/attempts/:id/content/:contentId/reading/position`, `…/sections/:sectionId/complete`, `…/checkpoints/:checkpointId/submit`, `GET …/resources/:resourceId/url` |
 | Quizzes | `GET /api/attempts/:id/quizzes/:quizId`, `POST …/attempt`, `GET …/results` |
 | Assessments | `GET /api/attempts/:id/assessments/:id`, `POST …/submit`, `GET …/results` |
 | Settlement | `GET /api/attempts/:id/settlement`, `/settlement/preview` |
@@ -489,7 +653,9 @@ The non-negotiables:
 1. Virtual points only — no money, no wagering.
 2. Sequential progression enforced server-side.
 3. Completion verified server-side (video watch segments, reading end point, graded
-   instruments) — not by a "mark complete" button.
+   instruments) — not by a "mark complete" button. For a structured reading lesson the
+   end point is *every section complete*, with checkpoint sections requiring a pass; a
+   scroll position is never accepted as proof.
 4. Final test locked until every required module is complete.
 5. Instructor weights must total exactly 100%.
 6. Final score = module × moduleWeight + finalTest × finalTestWeight.
@@ -517,10 +683,36 @@ Unit tests cover the arithmetic the reward economy depends on: grading, valid-wa
 tolerance, segment merging, scrub rejection, sequential unlocking, pacing/at-risk, weighted
 scoring, weight validation, retry recovery, performance bonus and reputation gating.
 
+> **The integration suite is destructive.** `resetDatabase()` runs
+> `TRUNCATE … CASCADE` over every table on each test, so it deletes all rows in whatever
+> database `DATABASE_URL` points at — users, courses, wallets, everything. Always run it
+> against a **throwaway database**, never your working one. The suite refuses to start
+> unless you opt in explicitly:
+>
+> ```bash
+> # bash
+> INTEGRATION_TEST_DB_CONFIRM=1 npm run test:integration
+> # PowerShell
+> $env:INTEGRATION_TEST_DB_CONFIRM='1'; npm run test:integration
+> ```
+>
+> Without that variable every database-backed test skips and prints the reason.
+
 Integration tests drive the real Express app against a real PostgreSQL database — no mocked
 services — and assert staking, insufficient balance, sequential locking, scrub rejection,
 full happy-path settlement, below-threshold bonus suppression, forfeiture, retry recovery,
 attempt limits, RBAC and concurrent-stake safety.
+
+The reading suite (`tests/integration/readingLesson.test.ts`) covers the MOOC reader
+specifically: draft lessons invisible to learners, learner access denied on authoring
+routes, in-order section unlocking, `CHECKPOINT_REQUIRED` for guarded sections, wrong-then-correct
+checkpoint answers, refusal to complete with sections outstanding, single completion record on
+double-complete, resume position across requests, cross-learner attempt rejection, progress kept
+after a published edit, and the publish gate plus HTML sanitisation.
+
+`tests/unit/readingLesson.test.ts` covers the same rules without a database: section-unlock
+walks, completion maths, checkpoint grading (including multi-choice set equality), authoring
+validation, the rich-text allow-list, and external-URL rejection of `javascript:`/`data:`.
 
 **If no database is reachable the integration suite reports as SKIPPED, never as passed**, so
 a green run cannot overstate coverage.
@@ -597,3 +789,28 @@ surfaces, indigo accent, hairline borders, no decorative shadow.
 Note: the original brief described a "dark dashboard with an orange accent". The supplied
 screens are light with an indigo accent and are treated as the source of truth. Switching
 themes is a token change in that one file.
+
+---
+
+## Certificates
+
+A learner who finishes a course can download a PDF certificate; anyone can verify one by code
+without an account.
+
+- **No storage.** The PDF is rendered per download from the `certificates` row (`pdf-lib`), so
+  there are no orphaned files and revocation takes effect immediately.
+- **Eligibility is server-side.** Issuing is refused with `422 INVALID_PROGRESS` unless the
+  attempt is `COMPLETED`, and `403` for an attempt that is not the caller's. There is no client
+  path to a certificate.
+- **Idempotent.** `certificates.attempt_id` is unique — a double-click or replay returns the same
+  code instead of minting a second certificate.
+- **Snapshot.** Learner name and course title are copied at issue time, so renaming a course later
+  does not rewrite an issued document.
+- **Verification** is public at `/verify/:code` and `GET /api/certificates/verify/:code`,
+  rate limited to 60/hour to make code guessing impractical. It exposes only what is printed on
+  the certificate.
+- **Revocation** is admin-only: `POST /api/certificates/:code/revoke { reason }`. A revoked
+  certificate stops downloading and verifies as invalid with the reason shown.
+
+Set `CERTIFICATE_ISSUER` (default `Stake It Academy`) for the issuing body printed on the document;
+`APP_URL` is used in the verification line at the foot of the PDF.

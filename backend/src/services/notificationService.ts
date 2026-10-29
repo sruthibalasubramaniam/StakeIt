@@ -3,6 +3,8 @@ import { prisma, type PrismaTransactionClient } from '../lib/prisma';
 import { notFound } from '../lib/errors';
 import { resolvePagination, paginated } from '../utils/http';
 import { logger } from '../lib/logger';
+import { isEmailConfigured } from '../lib/mailer';
+import { EmailService } from './emailService';
 
 type Tx = PrismaTransactionClient;
 
@@ -20,10 +22,35 @@ export interface NotifyInput {
  * only persists rows, so an email/push transport can be layered on later
  * without touching the business services that emit events.
  */
+/**
+ * Schedules the email for a freshly created notification.
+ *
+ * Two deliberate choices:
+ *  - dispatched on `setImmediate`, never inline, so mail latency cannot slow a
+ *    request and a mail failure cannot fail a transaction;
+ *  - retried briefly while the row is invisible, because notifications created
+ *    inside a transaction are only readable after it commits. A rolled-back
+ *    transaction therefore yields no email at all, which is the correct outcome.
+ */
+function scheduleEmailDelivery(notificationId: string, attempt = 0): void {
+  if (!isEmailConfigured()) return;
+
+  setImmediate(() => {
+    EmailService.dispatchNotification(notificationId)
+      .then((result) => {
+        if (result.status === 'SKIPPED' && result.reason === 'notification_missing' && attempt < 3) {
+          setTimeout(() => scheduleEmailDelivery(notificationId, attempt + 1), 700 * (attempt + 1));
+        }
+      })
+      .catch((error) => {
+        logger.warn({ err: error, notificationId }, 'Email dispatch crashed');
+      });
+  });
+}
 export const NotificationService = {
   async notify(tx: Tx | null, input: NotifyInput) {
     const client = tx ?? prisma;
-    return client.notification.create({
+    const notification = await client.notification.create({
       data: {
         userId: input.userId,
         type: input.type,
@@ -33,6 +60,9 @@ export const NotificationService = {
         metadata: input.metadata,
       },
     });
+
+    scheduleEmailDelivery(notification.id);
+    return notification;
   },
 
   /**

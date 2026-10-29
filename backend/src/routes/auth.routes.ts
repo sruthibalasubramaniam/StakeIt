@@ -9,6 +9,7 @@ import {
   loginSchema,
   registerSchema,
   updateProfileSchema,
+  emailPreferenceSchema,
 } from '../validators/schemas';
 
 export const authRouter = Router();
@@ -21,6 +22,7 @@ authRouter.post('/logout', authenticate, AuthController.logout);
 // clients can send either form of the update.
 authRouter.post('/profile', authenticate, requireAuth(), validate({ body: updateProfileSchema }), AuthController.updateProfile);
 authRouter.get('/profile', authenticate, requireAuth(), AuthController.profile);
+authRouter.patch('/email-preferences', authenticate, requireAuth(), validate({ body: emailPreferenceSchema }), AuthController.updateEmailPreferences);
 authRouter.put('/profile', authenticate, requireAuth(), validate({ body: updateProfileSchema }), AuthController.updateProfile);
 authRouter.patch('/profile', authenticate, requireAuth(), validate({ body: updateProfileSchema }), AuthController.updateProfile);
 

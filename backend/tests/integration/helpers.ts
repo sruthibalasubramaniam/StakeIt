@@ -2,7 +2,7 @@ import type { Express } from 'express';
 import request from 'supertest';
 import type { Role } from '@prisma/client';
 import { createApp } from '../../src/app';
-import { prisma } from '../../src/lib/prisma';
+import { markDatabaseReady, prisma } from '../../src/lib/prisma';
 import { hashPassword } from '../../src/services/tokenService';
 import { WalletService } from '../../src/services/walletService';
 
@@ -40,10 +40,19 @@ export const TEST_PASSWORD = 'Password123';
  * Running against a local PostgreSQL drops this to a few seconds; the large
  * value is purely a remote-database allowance.
  */
-export const INTEGRATION_TEST_TIMEOUT_MS = 120_000;
+export const INTEGRATION_TEST_TIMEOUT_MS = Number(process.env.INTEGRATION_TEST_TIMEOUT_MS ?? 120_000);
 
 /** Tables truncated between tests, in one statement. */
 const TRUNCATE_TABLES = [
+  // Structured reading (declared first for readability; TRUNCATE … CASCADE
+  // would reach them from module_contents anyway).
+  'reading_checkpoint_submissions',
+  'reading_checkpoint_options',
+  'reading_checkpoint_questions',
+  'reading_checkpoints',
+  'reading_section_progress',
+  'reading_sections',
+  'reading_resources',
   'notifications',
   'reward_pool_transactions',
   'wallet_transactions',
@@ -80,6 +89,27 @@ let cachedAvailability: boolean | null = null;
 export async function isDatabaseAvailable(attempts = 3): Promise<boolean> {
   if (cachedAvailability !== null) return cachedAvailability;
 
+  /*
+   * DESTRUCTIVE-SUITE GUARD.
+   *
+   * `resetDatabase()` runs `TRUNCATE … CASCADE` over every table, so pointing
+   * these suites at a real database erases its data. That happened once during
+   * development: the suite was run against a project's only database and wiped
+   * it. The opt-in flag makes the damage impossible by accident — without it the
+   * suites skip and print why.
+   *
+   *   set INTEGRATION_TEST_DB_CONFIRM=1        (PowerShell: $env:INTEGRATION_TEST_DB_CONFIRM='1')
+   */
+  if (process.env.INTEGRATION_TEST_DB_CONFIRM !== '1') {
+    console.warn(
+      '[integration] Refusing to run: these suites TRUNCATE every table.\n' +
+        '              Point DATABASE_URL at a throwaway database, then set\n' +
+        '              INTEGRATION_TEST_DB_CONFIRM=1 to confirm. Skipping.\n',
+    );
+    cachedAvailability = false;
+    return false;
+  }
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
       await prisma.$queryRaw`SELECT 1`;
@@ -95,6 +125,16 @@ export async function isDatabaseAvailable(attempts = 3): Promise<boolean> {
 }
 
 export function buildTestApp(): Express {
+  /*
+   * The app gates every `/api/*` request on `isDatabaseReady()`, and that flag is
+   * only flipped by `connectWithRetry()` during the real boot sequence in
+   * `server.ts`. Tests construct the app directly, so without this the readiness
+   * gate answers 503 to everything and no assertion can run.
+   *
+   * Safe here: every suite calls `isDatabaseAvailable()` first and skips when it
+   * is false, so the flag is only set once a query has actually succeeded.
+   */
+  markDatabaseReady(true);
   return createApp();
 }
 

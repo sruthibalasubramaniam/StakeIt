@@ -226,6 +226,19 @@ export const AuthService = {
     return loadProfile(userId);
   },
 
+  /**
+   * Toggles optional email. Receipts (enrolment, completion, settlement) are
+   * unaffected by design — see `OPTIONAL_EMAIL_TYPES` in emailService.
+   */
+  async setEmailPreference(userId: string, enabled: boolean) {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { emailNotificationsEnabled: enabled },
+      select: { emailNotificationsEnabled: true },
+    });
+    return user;
+  },
+
   async changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
     if (env.AUTH_PROVIDER === 'supabase') {
       throw forbidden('Password changes are managed by Supabase for this deployment.');

@@ -7,6 +7,7 @@ import { computeWatchProgress, validateHeartbeat, type Segment } from '../lib/wa
 import { env } from '../config/env';
 import { MIN_TRACKED_SEGMENT_SECONDS, READING_COMPLETION_THRESHOLD } from '../config/constants';
 import { roundTo } from '../utils/date';
+import { ReadingService } from './readingService';
 
 type Tx = PrismaTransactionClient;
 
@@ -37,6 +38,13 @@ export interface ContentView {
     usesComprehensionCheck: boolean;
     activeSeconds: number;
     completedAt: Date | null;
+    /** Structured-reading counters; `null` for every other content type. */
+    reading: {
+      structured: boolean;
+      totalSections: number;
+      completedSections: number;
+      percent: number;
+    } | null;
   };
   quiz: { id: string; passingScore: number; passed: boolean; bestPercentage: number | null; attemptsUsed: number; maxAttempts: number | null } | null;
   assessment: {
@@ -71,7 +79,13 @@ type AttemptWithContext = Prisma.CourseAttemptGetPayload<{
     enrollment: true;
     course: {
       include: {
-        modules: { include: { contents: { include: { quiz: true; assessment: true } } } };
+        modules: {
+          include: {
+            contents: {
+              include: { quiz: true; assessment: true; _count: { select: { readingSections: true } } };
+            };
+          };
+        };
         assessments: true;
       };
     };
@@ -117,8 +131,20 @@ export function assertAttemptActive(attempt: Pick<CourseAttempt, 'status' | 'gra
 }
 
 export const LearningService = {
-  async loadAttempt(attemptId: string, userId: string): Promise<AttemptWithContext> {
-    const attempt = await prisma.courseAttempt.findUnique({
+  /**
+   * Loads an attempt with everything the sequence walker needs.
+   *
+   * `client` exists because callers inside an open transaction MUST pass `tx`:
+   * with `pgbouncer=true` Prisma defaults to `connection_limit=1`, so a query on
+   * the global client from inside a transaction waits forever for the connection
+   * the transaction already holds (`P2024`). Settlement used to do exactly that.
+   */
+  async loadAttempt(
+    attemptId: string,
+    userId: string,
+    client: PrismaTransactionClient | typeof prisma = prisma,
+  ): Promise<AttemptWithContext> {
+    const attempt = await client.courseAttempt.findUnique({
       where: { id: attemptId },
       include: {
         enrollment: true,
@@ -129,7 +155,7 @@ export const LearningService = {
               include: {
                 contents: {
                   orderBy: { orderIndex: 'asc' },
-                  include: { quiz: true, assessment: true },
+                  include: { quiz: true, assessment: true, _count: { select: { readingSections: true } } },
                 },
               },
             },
@@ -255,6 +281,18 @@ export const LearningService = {
             usesComprehensionCheck: content.requiresComprehensionCheck,
             activeSeconds: progress?.activeSeconds ?? 0,
             completedAt: progress?.completedAt ?? null,
+            reading:
+              content.type === 'READING' && content._count.readingSections > 0
+                ? {
+                    structured: true,
+                    totalSections: content._count.readingSections,
+                    completedSections: progress?.readingSectionsDone ?? 0,
+                    percent: roundTo(
+                      ((progress?.readingSectionsDone ?? 0) / content._count.readingSections) * 100,
+                      1,
+                    ),
+                  }
+                : null,
           },
           quiz: content.quiz
             ? {
@@ -521,10 +559,62 @@ export const LearningService = {
     }
 
     if (content.type === 'READING') {
+      /*
+       * A reading lesson exists in two shapes:
+       *  - structured (MOOC reader): ordered sections, optional checkpoints,
+       *    attached PDFs/links. Built by `ReadingService`.
+       *  - legacy: a single `readingBody` string, unchanged since before the
+       *    reader existed. `structured: false` keeps old clients working.
+       */
+      const reader = await ReadingService.buildReaderPayload({ attemptId, content, userId });
+
+      if (reader.structured) {
+        if (!reader.published) {
+          throw unprocessable('This reading lesson has not been published yet.', 'CONTENT_LOCKED', {
+            reason: 'NOT_PUBLISHED',
+            contentId,
+          });
+        }
+
+        return {
+          ...base,
+          payload: {
+            kind: 'READING' as const,
+            structured: true,
+            // Section content is served in `sections`; `body` stays null so a
+            // client cannot accidentally render the lesson twice.
+            body: null,
+            requiresComprehensionCheck: false,
+            comprehensionPrompt: null,
+            completionThreshold: 1,
+            lesson: {
+              objectives: reader.objectives,
+              references: reader.references,
+              estimatedMinutes: reader.estimatedMinutes,
+              version: reader.version,
+            },
+            sections: reader.sections,
+            resources: reader.resources,
+            resume: reader.resume,
+            sectionProgress: reader.sectionProgress,
+            completion: reader.completion,
+            storageConfigured: reader.storageConfigured,
+            /*
+             * Must be listed explicitly: this payload is assembled field by
+             * field, so a field added to `buildReaderPayload` does not reach the
+             * client unless it is named here. `aiConfigured` was dropped this
+             * way, which silently hid the AI affordances in the reader.
+             */
+            aiConfigured: reader.aiConfigured,
+          },
+        };
+      }
+
       return {
         ...base,
         payload: {
           kind: 'READING' as const,
+          structured: false,
           body: content.readingBody,
           requiresComprehensionCheck: content.requiresComprehensionCheck,
           // The answer key is never sent to the client.
@@ -669,7 +759,17 @@ export const LearningService = {
     }
 
     const scrollPercent = Math.min(100, Math.max(0, Number(input.scrollPercent ?? 0)));
-    const reachedEnd = Boolean(input.reachedEnd) || scrollPercent / 100 >= READING_COMPLETION_THRESHOLD;
+
+    /*
+     * A structured lesson cannot be completed by scrolling. The heartbeat is
+     * still accepted (it records engagement time), but `readingReachedEnd` is
+     * left to the section rules so a client cannot stub it out.
+     */
+    const sectionCount = await prisma.readingSection.count({ where: { contentId } });
+    const structured = sectionCount > 0;
+    const reachedEnd = structured
+      ? false
+      : Boolean(input.reachedEnd) || scrollPercent / 100 >= READING_COMPLETION_THRESHOLD;
 
     const updated = await withTransaction(async (tx) => {
       const progress = await this.getOrCreateProgress(tx, attemptId, contentId, userId);
@@ -677,7 +777,7 @@ export const LearningService = {
         where: { id: progress.id },
         data: {
           status: progress.status === 'COMPLETED' ? 'COMPLETED' : 'IN_PROGRESS',
-          readingReachedEnd: progress.readingReachedEnd || reachedEnd,
+          ...(structured ? {} : { readingReachedEnd: progress.readingReachedEnd || reachedEnd }),
           lastPositionSeconds: Math.round(scrollPercent),
           activeSeconds: { increment: Math.max(0, Math.round(Number(input.activeSeconds ?? 0))) },
           firstAccessedAt: progress.firstAccessedAt ?? new Date(),
@@ -689,6 +789,10 @@ export const LearningService = {
       readingReachedEnd: updated.readingReachedEnd,
       requiresComprehensionCheck: content.requiresComprehensionCheck,
       comprehensionPassed: updated.comprehensionPassed,
+      structured,
+      notice: structured
+        ? 'This lesson is completed section by section — scrolling does not count.'
+        : undefined,
     };
   },
 
@@ -737,8 +841,21 @@ export const LearningService = {
     courseRequiredWatchPercent: number;
     quizPassed: boolean;
     assessmentPassed: boolean;
+    /**
+     * Structured-reading state. When present and `structured`, the lesson is
+     * complete only when every section is complete — scrolling to the bottom
+     * (`readingReachedEnd`) is deliberately ignored.
+     */
+    reading?: {
+      structured: boolean;
+      complete: boolean;
+      completedCount: number;
+      totalSections: number;
+      pendingSectionTitles: string[];
+      pendingCheckpoints: boolean;
+    } | null;
   }): { complete: boolean; reason: string; requirement: string } {
-    const { content, progress, courseRequiredWatchPercent, quizPassed, assessmentPassed } = params;
+    const { content, progress, courseRequiredWatchPercent, quizPassed, assessmentPassed, reading } = params;
 
     switch (content.type) {
       case 'VIDEO': {
@@ -754,6 +871,22 @@ export const LearningService = {
         };
       }
       case 'READING': {
+        // Structured lesson: section completion (and its checkpoints) is the
+        // only accepted proof. Scrolling never completes it.
+        if (reading?.structured) {
+          const pending = reading.pendingSectionTitles.slice(0, 3).join(', ');
+          const more = reading.pendingSectionTitles.length > 3 ? '…' : '';
+          return {
+            complete: reading.complete,
+            reason: reading.complete
+              ? 'Every section and knowledge check is complete.'
+              : `Finish ${reading.totalSections - reading.completedCount} remaining section(s)${
+                  reading.pendingCheckpoints ? ' and their knowledge checks' : ''
+                }${pending ? `: ${pending}${more}` : ''}.`,
+            requirement: reading.pendingCheckpoints ? 'READING_SECTIONS_AND_CHECKPOINTS' : 'READING_SECTIONS',
+          };
+        }
+
         const reachedEnd = progress?.readingReachedEnd ?? false;
         const comprehensionOk = !content.requiresComprehensionCheck || progress?.comprehensionPassed === true;
         const complete = reachedEnd && comprehensionOk;
@@ -831,6 +964,11 @@ export const LearningService = {
         )
       : false;
 
+    // Structured readings are verified against per-section progress, never
+    // against a client-reported scroll position.
+    const readingState =
+      content.type === 'READING' ? await ReadingService.getCompletionState(attemptId, contentId) : null;
+
     const evaluation = this.evaluateCompletion({
       content: {
         type: content.type,
@@ -842,6 +980,7 @@ export const LearningService = {
       courseRequiredWatchPercent: attempt.course.requiredWatchPercent,
       quizPassed,
       assessmentPassed,
+      reading: readingState,
     });
 
     if (!evaluation.complete) {
@@ -857,7 +996,17 @@ export const LearningService = {
       if (existing.status === 'COMPLETED') return existing;
       return tx.contentProgress.update({
         where: { id: existing.id },
-        data: { status: 'COMPLETED', completedAt: new Date() },
+        data: {
+          status: 'COMPLETED',
+          completedAt: new Date(),
+          ...(readingState?.structured
+            ? {
+                readingSectionsDone: readingState.completedCount,
+                readingCompletedVersion: content.readingVersion,
+                readingReachedEnd: true,
+              }
+            : {}),
+        },
       });
     });
 

@@ -2,7 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../layouts/AppShell';
 import { AuthLayout } from '../layouts/AuthLayout';
 import { ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
-import { RouteErrorPage } from '../pages/errors/ErrorPages';
+import { NotFoundRoutePage } from '../pages/errors/ErrorPages';
+import { VerifyCertificatePage } from '../pages/public/VerifyCertificatePage';
 import { useAuth } from '../context/AuthContext';
 import { AppBootSplash } from '../layouts/AppShell';
 import { homePathFor } from './routeAccess';
@@ -33,6 +34,7 @@ import { InstructorDashboardPage } from '../pages/instructor/InstructorDashboard
 import { InstructorCoursesPage } from '../pages/instructor/InstructorCoursesPage';
 import { CourseFormPage } from '../pages/instructor/CourseFormPage';
 import { CourseBuilderPage } from '../pages/instructor/CourseBuilderPage';
+import { ReadingLessonEditorPage } from '../pages/instructor/ReadingLessonEditorPage';
 import { CourseLearnersPage } from '../pages/instructor/CourseLearnersPage';
 import { CourseAnalyticsPage } from '../pages/instructor/CourseAnalyticsPage';
 
@@ -68,7 +70,7 @@ export function AppRoutes() {
   return (
     <Routes>
       {/* Public — signed-in visitors are sent to their own role's home */}
-      <Route element={<AuthLayout />} errorElement={<RouteErrorPage />}>
+      <Route element={<AuthLayout />}>
         <Route
           path="/login"
           element={
@@ -94,7 +96,6 @@ export function AppRoutes() {
             <AppShell />
           </ProtectedRoute>
         }
-        errorElement={<RouteErrorPage />}
       >
         {/* Learner */}
         <Route
@@ -232,6 +233,14 @@ export function AppRoutes() {
           }
         />
         <Route
+          path="/instructor/courses/:courseId/reading/:contentId"
+          element={
+            <ProtectedRoute allow={['INSTRUCTOR']}>
+              <ReadingLessonEditorPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/instructor/courses/:courseId/learners"
           element={
             <ProtectedRoute allow={['INSTRUCTOR']}>
@@ -269,13 +278,24 @@ export function AppRoutes() {
         <Route path="/admin/courses/create" element={<ProtectedRoute allow={['ADMIN']}><CourseFormPage /></ProtectedRoute>} />
         <Route path="/admin/courses/:courseId/edit" element={<ProtectedRoute allow={['ADMIN']}><CourseFormPage /></ProtectedRoute>} />
         <Route path="/admin/courses/:courseId/builder" element={<ProtectedRoute allow={['ADMIN']}><CourseBuilderPage /></ProtectedRoute>} />
+        <Route
+          path="/admin/courses/:courseId/reading/:contentId"
+          element={
+            <ProtectedRoute allow={['ADMIN']}>
+              <ReadingLessonEditorPage />
+            </ProtectedRoute>
+          }
+        />
         <Route path="/admin/courses/:courseId/learners" element={<ProtectedRoute allow={['ADMIN']}><CourseLearnersPage /></ProtectedRoute>} />
         <Route path="/admin/courses/:courseId/analytics" element={<ProtectedRoute allow={['ADMIN']}><CourseAnalyticsPage /></ProtectedRoute>} />
       </Route>
 
       {/* Landing + catch-all */}
       <Route path="/" element={<RoleHome />} />
-      <Route path="*" element={<RouteErrorPage />} />
+      {/* Public: a certificate code must be checkable without an account. */}
+        <Route path="/verify" element={<VerifyCertificatePage />} />
+        <Route path="/verify/:code" element={<VerifyCertificatePage />} />
+        <Route path="*" element={<NotFoundRoutePage />} />
     </Routes>
   );
 }

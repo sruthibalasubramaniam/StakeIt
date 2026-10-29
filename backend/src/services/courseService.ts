@@ -675,12 +675,8 @@ export const CourseService = {
             message: `Video content "${content.title}" is missing a video URL.`,
           });
         }
-        if (content.type === 'READING' && !content.readingBody) {
-          blocking.push({
-            field: `content:${content.id}`,
-            message: `Reading content "${content.title}" is missing its body.`,
-          });
-        }
+        // Reading lessons are validated below through `ReadingService`, which
+        // understands both the legacy body and the structured (sectioned) form.
       });
     });
 
@@ -725,6 +721,15 @@ export const CourseService = {
     } else if (finalAssessment._count.questions === 0) {
       blocking.push({ field: 'finalAssessment', message: 'The final course assessment has no questions.' });
     }
+
+    /*
+     * Reading lessons: a structured lesson must be published and complete, and a
+     * legacy reading must still have a body. Loaded lazily so this module and
+     * `ReadingService` (which imports it for ownership checks) do not form a
+     * static cycle.
+     */
+    const { ReadingService } = await import('./readingService');
+    blocking.push(...(await ReadingService.coursePublishBlockers(courseId)));
 
     if (course.baseStake > 0 && course.completionReward === 0 && course.commitmentBonus === 0) {
       blocking.push({
